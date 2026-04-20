@@ -1,6 +1,10 @@
 # edtr
 
 <p align="center">
+  <img src="assets/icon.png" width="128" alt="edtr icon" />
+</p>
+
+<p align="center">
   <img src="assets/logo.svg" width="520" alt="edtr — editor router" />
 </p>
 
