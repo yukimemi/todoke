@@ -103,8 +103,16 @@ fn plan_batches(cli: &Cli, cfg: &ResolvedConfig, files: &[PathBuf]) -> Result<Ve
         // Resolve group: --group flag wins, else rule.group template, else default.
         let group = resolve_group(cli, cfg, &mut tera, rule, &canonical, &cwd, &rule_name)?;
 
-        // Resolve editor: --editor flag wins, else rule.editor.
-        let editor_name = cli.editor.clone().unwrap_or_else(|| rule.editor.clone());
+        // Resolve editor: --editor flag wins, else rule.editor (Tera-rendered
+        // so `editor = "{{ vars.gui }}"` works for swapping editors via vars).
+        let editor_name = match cli.editor.clone() {
+            Some(e) => e,
+            None => {
+                let file = FileParts::from_path(&canonical);
+                let ctx = build_context(&file, None, &cwd, "", &rule_name, &cfg.raw.vars);
+                render(&mut tera, &rule.editor, &ctx).context("rendering rule.editor template")?
+            }
+        };
 
         let key = BatchKey {
             editor: editor_name.clone(),
@@ -243,6 +251,8 @@ async fn run_batch(cfg: &ResolvedConfig, batch: &Batch) -> Result<()> {
                 render(&mut tera, listen_tmpl, &ctx).context("rendering editor.listen template")?;
             let command = render(&mut tera, &editor.command, &ctx)
                 .context("rendering editor.command template")?;
+            let args_remote = render_arg_list(&mut tera, &editor.args_remote, &ctx)?;
+            let args_new = render_arg_list(&mut tera, &editor.args_new, &ctx)?;
 
             info!(
                 editor = %batch.editor_name,
@@ -254,7 +264,12 @@ async fn run_batch(cfg: &ResolvedConfig, batch: &Batch) -> Result<()> {
                 "dispatching to neovim"
             );
 
-            let backend = NeovimBackend { command, listen };
+            let backend = NeovimBackend {
+                command,
+                listen,
+                args_remote,
+                args_new,
+            };
             backend.dispatch(&batch.files, batch.mode, batch.sync).await
         }
         EditorKind::Generic => {
@@ -288,6 +303,16 @@ async fn run_batch(cfg: &ResolvedConfig, batch: &Batch) -> Result<()> {
             backend.dispatch(dctx)
         }
     }
+}
+
+fn render_arg_list(
+    tera: &mut tera::Tera,
+    args: &[String],
+    ctx: &tera::Context,
+) -> Result<Vec<String>> {
+    args.iter()
+        .map(|a| render(tera, a, ctx).with_context(|| format!("rendering arg template: {a}")))
+        .collect()
 }
 
 fn print_plan(plan: &[Batch]) {

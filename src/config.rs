@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, anyhow};
-use directories::ProjectDirs;
+use directories::BaseDirs;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -90,6 +90,10 @@ pub enum Mode {
 
 pub const DEFAULT_GROUP: &str = "default";
 
+fn is_template(s: &str) -> bool {
+    s.contains("{{") || s.contains("{%")
+}
+
 /// Config + ahead-of-time regex compilation + cross-reference validation.
 #[derive(Debug)]
 pub struct ResolvedConfig {
@@ -110,8 +114,14 @@ impl ResolvedConfig {
     }
 
     fn compile(raw: Config) -> Result<Self> {
-        // validate editor references
+        // validate editor references; skip rules whose editor field is a Tera
+        // template (e.g. `"{{ vars.gui }}"`) — those resolve at dispatch time
+        // and the dispatcher surfaces a clear error if the rendered name is
+        // still not a known editor.
         for (i, rule) in raw.rules.iter().enumerate() {
+            if is_template(&rule.editor) {
+                continue;
+            }
             if !raw.editors.contains_key(&rule.editor) {
                 return Err(anyhow!(
                     "rule[{i}] ({}) references unknown editor '{}'. Known editors: {}",
@@ -147,10 +157,12 @@ impl ResolvedConfig {
 /// Resolve which config file edtr should load.
 ///
 /// Priority:
-/// 1. Explicit --config <path> argument
-/// 2. `$EDTR_CONFIG` env var
-/// 3. `~/.config/edtr/edtr.toml` on Linux/Mac or
-///    `%APPDATA%\edtr\edtr.toml` on Windows (via `directories` crate)
+/// 1. Explicit `--config <path>` argument.
+/// 2. `$EDTR_CONFIG` env var.
+/// 3. `~/.config/edtr/edtr.toml` on every platform. We deliberately pick the
+///    XDG-style layout on Windows too (instead of `%APPDATA%\edtr\`) so the
+///    same dotfiles repo works everywhere — the common setup for users of
+///    chezmoi / stow / yadm, who put configs under `.config/` on all OSes.
 pub fn resolve_path(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(p) = explicit {
         return Ok(p.to_path_buf());
@@ -158,9 +170,10 @@ pub fn resolve_path(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Ok(env_path) = std::env::var("EDTR_CONFIG") {
         return Ok(PathBuf::from(env_path));
     }
-    let dirs = ProjectDirs::from("", "", "edtr")
-        .ok_or_else(|| anyhow!("could not determine config directory for edtr"))?;
-    Ok(dirs.config_dir().join("edtr.toml"))
+    let home = BaseDirs::new()
+        .map(|d| d.home_dir().to_path_buf())
+        .ok_or_else(|| anyhow!("could not determine home directory"))?;
+    Ok(home.join(".config").join("edtr").join("edtr.toml"))
 }
 
 /// Load + parse config. Falls back to the embedded default when the file does

@@ -41,6 +41,13 @@ impl Handler for DummyHandler {
 pub struct NeovimBackend {
     pub command: String,
     pub listen: String,
+    /// Extra args inserted before `--listen` when spawning for remote-mode
+    /// fallback. Needed for wrappers like `neovide` which only forward args to
+    /// nvim when they come after `--`. Default for direct `nvim`: empty.
+    pub args_remote: Vec<String>,
+    /// Extra args inserted before the files when spawning in `new` mode (no
+    /// `--listen`). Useful for e.g. `neovide --no-fork` in sync scenarios.
+    pub args_new: Vec<String>,
 }
 
 impl NeovimBackend {
@@ -83,12 +90,23 @@ impl NeovimBackend {
         }
     }
 
+    /// Argv layout: `command FILES... <args_remote>... --listen LISTEN`.
+    ///
+    /// Files come first so wrappers like `neovide` recognize them as
+    /// `FILES_TO_OPEN` (neovide's help: positional args before `--` are
+    /// forwarded to nvim as files). `args_remote` then carries the `--`
+    /// separator that lets `--listen` reach the embedded nvim. For plain
+    /// `nvim` (empty `args_remote`) this collapses to
+    /// `nvim FILE --listen PIPE`, which nvim accepts.
     fn spawn_detached_with_listen(&self, files: &[PathBuf]) -> Result<()> {
         let mut cmd = StdCommand::new(&self.command);
-        cmd.arg("--listen").arg(&self.listen);
         for f in files {
             cmd.arg(f);
         }
+        for a in &self.args_remote {
+            cmd.arg(a);
+        }
+        cmd.arg("--listen").arg(&self.listen);
         platform::spawn_detached(
             &mut cmd,
             files.first().map(PathBuf::as_path).unwrap_or(Path::new("")),
@@ -99,6 +117,9 @@ impl NeovimBackend {
 
     fn spawn_detached_fresh(&self, files: &[PathBuf]) -> Result<()> {
         let mut cmd = StdCommand::new(&self.command);
+        for a in &self.args_new {
+            cmd.arg(a);
+        }
         for f in files {
             cmd.arg(f);
         }
@@ -112,6 +133,9 @@ impl NeovimBackend {
 
     fn spawn_sync(&self, files: &[PathBuf]) -> Result<()> {
         let mut cmd = StdCommand::new(&self.command);
+        for a in &self.args_new {
+            cmd.arg(a);
+        }
         for f in files {
             cmd.arg(f);
         }
