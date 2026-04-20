@@ -1,34 +1,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <defs>
+    <!-- Deep slate background, no primary blue -->
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#1f6feb"/>
-      <stop offset="100%" stop-color="#0550ae"/>
+      <stop offset="0%" stop-color="#1e293b"/>   <!-- slate-800 -->
+      <stop offset="100%" stop-color="#0b1220"/> <!-- darker than slate-900 -->
     </linearGradient>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="2" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
+    <!-- Subtle inner highlight -->
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#475569" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#475569" stop-opacity="0"/>
+    </linearGradient>
+    <marker id="head" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#06b6d4"/>
+    </marker>
   </defs>
 
-  <!-- rounded square background -->
-  <rect x="16" y="16" width="224" height="224" rx="40" fill="url(#bg)"/>
+  <!-- Rounded square plate -->
+  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#bg)"/>
+  <!-- Hairline rim for depth -->
+  <rect x="16.5" y="16.5" width="223" height="223" rx="44" fill="url(#rim)" stroke="#334155" stroke-width="1"/>
 
-  <!-- routing glyph: a central hub with three fanning arrows, abstracted
-       as diagonal strokes meeting at a dot. Simple enough to read at 16x16. -->
-  <g stroke="#ffffff" stroke-width="16" stroke-linecap="round" fill="none" filter="url(#glow)">
-    <!-- incoming (left) -->
-    <path d="M 54 128 L 112 128"/>
-    <!-- outgoing 1 (up-right) -->
-    <path d="M 144 128 L 202 78"/>
-    <!-- outgoing 2 (right) -->
-    <path d="M 144 128 L 202 128"/>
-    <!-- outgoing 3 (down-right) -->
-    <path d="M 144 128 L 202 178"/>
+  <!-- I-beam (text cursor) on the left: the universal "editor" mark.
+       Bar height ≈ 70% of the plate, hefty serifs. -->
+  <g fill="none" stroke="#f1f5f9" stroke-width="16" stroke-linecap="round">
+    <!-- top serif -->
+    <line x1="58" y1="68" x2="118" y2="68"/>
+    <!-- vertical bar -->
+    <line x1="88" y1="68" x2="88" y2="188"/>
+    <!-- bottom serif -->
+    <line x1="58" y1="188" x2="118" y2="188"/>
   </g>
 
-  <!-- center hub dot -->
-  <circle cx="128" cy="128" r="18" fill="#ffffff"/>
+  <!-- Three routing arrows fanning from the I-beam toward the right.
+       Cyan accent reads as "data flowing out" without being primary blue. -->
+  <g fill="none" stroke="#06b6d4" stroke-width="13" stroke-linecap="round">
+    <path d="M 132 90  C 168 84,  186 78,  198 66"  marker-end="url(#head)"/>
+    <path d="M 132 128 L 200 128"                    marker-end="url(#head)"/>
+    <path d="M 132 166 C 168 172, 186 178, 198 190"  marker-end="url(#head)"/>
+  </g>
 </svg>
