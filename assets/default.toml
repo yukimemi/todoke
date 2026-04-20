@@ -1,0 +1,32 @@
+# edtr default config.
+# Lives at ~/.config/edtr/edtr.toml (or %APPDATA%\edtr\edtr.toml on Windows).
+# Values in double-braces are Tera template expressions.
+
+[vars]
+# user-defined vars go here, e.g.:
+# proj_root = "/home/you/src"
+
+[editors.nvim]
+kind = "neovim"
+command = "nvim"
+# Pipe path differs per OS. is_windows()/is_linux()/is_mac() are edtr-provided
+# Tera functions.
+listen = '{% if is_windows() %}\\.\pipe\nvim-edtr-{{ group }}{% else %}/tmp/nvim-edtr-{{ group }}.sock{% endif %}'
+
+# git commit, rebase todo, merge messages etc. — always a fresh nvim, block
+# until it exits so callers like `git commit` see the result.
+[[rules]]
+name = "editor-callback"
+match = '(?i)/(COMMIT_EDITMSG|MERGE_MSG|TAG_EDITMSG|EDIT_DESCRIPTION|git-rebase-todo|\.gitmessage|NOTES_EDITMSG|svn-commit\.tmp)$'
+editor = "nvim"
+mode = "new"
+sync = true
+
+# Everything else: reuse a single long-running nvim called "default".
+[[rules]]
+name = "default"
+match = '.*'
+editor = "nvim"
+group = "default"
+mode = "remote"
+sync = false
