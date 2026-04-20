@@ -8,7 +8,7 @@
 //! Tera expansion happens at dispatch time (not load time) because rule.group
 //! and editor.* templates can reference per-file context.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -188,7 +188,14 @@ pub fn load(explicit: Option<&Path>) -> Result<ResolvedConfig> {
         (DEFAULT_CONFIG_TOML.to_string(), None)
     };
 
-    let raw: Config = toml::from_str(&text).with_context(|| {
+    let rendered = prerender(&text).with_context(|| {
+        source
+            .as_ref()
+            .map(|p| format!("Tera pre-render failed for {}", p.display()))
+            .unwrap_or_else(|| "Tera pre-render failed for embedded default TOML".into())
+    })?;
+
+    let raw: Config = toml::from_str(&rendered).with_context(|| {
         source
             .as_ref()
             .map(|p| format!("failed to parse TOML at {}", p.display()))
@@ -201,8 +208,110 @@ pub fn load(explicit: Option<&Path>) -> Result<ResolvedConfig> {
 /// Alternative loader that parses from an explicit string (useful for tests).
 #[allow(dead_code)]
 pub fn load_from_str(text: &str) -> Result<ResolvedConfig> {
-    let raw: Config = toml::from_str(text).context("failed to parse TOML")?;
+    let rendered = prerender(text).context("Tera pre-render failed")?;
+    let raw: Config = toml::from_str(&rendered).context("failed to parse TOML")?;
     ResolvedConfig::compile(raw)
+}
+
+/// Pre-render the TOML text through Tera so users can use structural
+/// conditionals like `{% if vars.use_neovide %}[editors.X]...{% endif %}` or
+/// value-level expressions like `command = "{{ vars.gui }}"`.
+///
+/// The context exposes:
+/// - `vars.*` — extracted from the raw text's `[vars]` / `[vars.*]` sections
+///   via a lightweight line scan (so we can populate vars without having to
+///   parse the whole — still-templated — file as valid TOML yet).
+/// - `env.*` — process env vars.
+/// - `is_windows()` / `is_linux()` / `is_mac()` — edtr-provided.
+/// - Dispatch-time placeholders (`file_path`, `group`, `rule`, …) are inserted
+///   as self-referential strings (`"{{ group }}"`) so those tokens pass
+///   through pre-render unchanged and get rendered later with real values in
+///   [`crate::dispatcher`].
+fn prerender(text: &str) -> Result<String> {
+    let vars = extract_vars(text);
+
+    let mut tera = crate::template::new_engine();
+    let mut ctx = tera::Context::new();
+
+    let vars_map: HashMap<String, toml::Value> = vars.into_iter().collect();
+    ctx.insert("vars", &vars_map);
+
+    let env_map: HashMap<String, String> = std::env::vars().collect();
+    ctx.insert("env", &env_map);
+
+    // Self-referential placeholders keep dispatch-time tokens intact.
+    for name in [
+        "file_path",
+        "file_dir",
+        "file_name",
+        "file_stem",
+        "file_ext",
+        "editor_path",
+        "editor_dir",
+        "editor_name",
+        "editor_stem",
+        "editor_ext",
+        "cwd",
+        "group",
+        "rule",
+    ] {
+        ctx.insert(name, &format!("{{{{ {name} }}}}"));
+    }
+
+    tera.render_str(text, &ctx).map_err(|e| {
+        // Tera nests the real problem under Error::source — walk the chain so
+        // the user sees the line/column, not just "Failed to parse".
+        let mut msg = e.to_string();
+        let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(&e);
+        while let Some(s) = src {
+            msg.push_str(&format!("\n  caused by: {s}"));
+            src = s.source();
+        }
+        anyhow!(msg)
+    })
+}
+
+/// Scan raw text for `[vars]` / `[vars.*]` sections and parse them as TOML.
+/// Tera block lines (`{% … %}`) that may live in between sections are
+/// stripped before parsing. Any parse failure yields an empty map so the
+/// later pre-render pass can surface a clearer error.
+fn extract_vars(text: &str) -> BTreeMap<String, toml::Value> {
+    let mut buf = String::new();
+    let mut in_vars = false;
+    for line in text.lines() {
+        let tr = line.trim_start();
+        if let Some(rest) = tr.strip_prefix('[') {
+            // Parse out the section name up to the closing ']'. Handles both
+            // `[vars]` and `[vars.sub]`; ignores `[[array_of_tables]]`.
+            let is_aot = rest.starts_with('[');
+            let inner = rest
+                .trim_start_matches('[')
+                .split(']')
+                .next()
+                .unwrap_or("")
+                .trim();
+            in_vars = !is_aot && (inner == "vars" || inner.starts_with("vars."));
+        }
+        if in_vars {
+            buf.push_str(line);
+            buf.push('\n');
+        }
+    }
+    if buf.is_empty() {
+        return BTreeMap::new();
+    }
+    // Drop any Tera control blocks that slipped into buf between a [vars*]
+    // section and the next section header; they are not valid TOML.
+    let tera_block = Regex::new(r"(?s)\{%.*?%\}").expect("static regex");
+    let cleaned = tera_block.replace_all(&buf, "");
+    #[derive(Deserialize, Default)]
+    struct VarsOnly {
+        #[serde(default)]
+        vars: BTreeMap<String, toml::Value>,
+    }
+    toml::from_str::<VarsOnly>(&cleaned)
+        .map(|w| w.vars)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -268,5 +377,103 @@ mod tests {
         assert_eq!(cfg.raw.rules[0].mode, Mode::Remote);
         assert!(!cfg.raw.rules[0].sync);
         assert!(cfg.raw.rules[0].group.is_none());
+    }
+
+    #[test]
+    fn tera_conditional_blocks_are_applied_at_load_time() {
+        // Same source, different vars → different rule set.
+        let src = r#"
+            [vars]
+            use_neovide = true
+
+            [editors.nvim]
+            kind = "neovim"
+            command = "nvim"
+            listen = "/tmp/sock"
+
+            {% if vars.use_neovide %}
+            [editors.nvim-gui]
+            kind = "neovim"
+            command = "neovide"
+            listen = "/tmp/sock-gui"
+            args_remote = ["--"]
+            {% endif %}
+
+            [[rules]]
+            match = ".*"
+            editor = "nvim"
+        "#;
+        let cfg = load_from_str(src).unwrap();
+        assert!(cfg.raw.editors.contains_key("nvim-gui"));
+
+        let src_off = src.replace("use_neovide = true", "use_neovide = false");
+        let cfg2 = load_from_str(&src_off).unwrap();
+        assert!(!cfg2.raw.editors.contains_key("nvim-gui"));
+        assert!(cfg2.raw.editors.contains_key("nvim"));
+    }
+
+    #[test]
+    fn dispatch_time_placeholders_survive_prerender() {
+        // `{{ group }}` and `{{ file_path }}` must pass through pre-render
+        // intact so the dispatcher can fill them per file later.
+        let src = r#"
+            [editors.nvim]
+            kind = "neovim"
+            command = "nvim"
+            listen = '/tmp/nvim-edtr-{{ group }}.sock'
+
+            [[rules]]
+            match = ".*"
+            editor = "nvim"
+            group = "{{ file_stem }}"
+        "#;
+        let cfg = load_from_str(src).unwrap();
+        assert_eq!(
+            cfg.raw.editors["nvim"].listen.as_deref(),
+            Some("/tmp/nvim-edtr-{{ group }}.sock"),
+        );
+        assert_eq!(cfg.raw.rules[0].group.as_deref(), Some("{{ file_stem }}"));
+    }
+
+    #[test]
+    fn vars_value_substitutes_top_level() {
+        let src = r#"
+            [vars]
+            gui = "neovide"
+
+            [editors.nvim]
+            kind = "neovim"
+            command = "{{ vars.gui }}"
+            listen = "/tmp/sock"
+
+            [[rules]]
+            match = ".*"
+            editor = "nvim"
+        "#;
+        let cfg = load_from_str(src).unwrap();
+        assert_eq!(cfg.raw.editors["nvim"].command, "neovide");
+    }
+
+    #[test]
+    fn vars_subtables_are_picked_up() {
+        let src = r#"
+            [vars]
+            gui = "neovide"
+
+            [vars.colors]
+            primary = "blue"
+
+            [editors.nvim]
+            kind = "neovim"
+            command = "{{ vars.gui }}"
+            listen = "/tmp/{{ vars.colors.primary }}"
+
+            [[rules]]
+            match = ".*"
+            editor = "nvim"
+        "#;
+        let cfg = load_from_str(src).unwrap();
+        assert_eq!(cfg.raw.editors["nvim"].command, "neovide");
+        assert_eq!(cfg.raw.editors["nvim"].listen.as_deref(), Some("/tmp/blue"));
     }
 }
