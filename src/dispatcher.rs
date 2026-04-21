@@ -22,6 +22,9 @@ use crate::editors::{
     neovim::NeovimBackend,
 };
 use crate::matcher::{first_match, normalize_path, strip_verbatim};
+use crate::style::{
+    accent, bold, dim, level_error, level_info, level_ok, level_warn, muted, styled,
+};
 use crate::template::{FileParts, build_context, new_engine, render};
 
 pub async fn dispatch(cli: &Cli, files: &[PathBuf]) -> Result<()> {
@@ -116,7 +119,6 @@ pub async fn doctor(cli: &Cli) -> Result<()> {
     let cfg = config::load(cli.config.as_deref())?;
     let path = config::resolve_path(cli.config.as_deref())?;
 
-    println!("config: {}", path.display());
     let editor_names = cfg
         .raw
         .editors
@@ -124,16 +126,27 @@ pub async fn doctor(cli: &Cli) -> Result<()> {
         .cloned()
         .collect::<Vec<_>>()
         .join(", ");
+
     println!(
-        "editors: {} ({})",
-        if editor_names.is_empty() {
-            "<none>".into()
-        } else {
-            editor_names
-        },
-        cfg.raw.editors.len()
+        "{} {}",
+        styled("config:", muted()),
+        styled(path.display(), accent()),
     );
-    println!("rules: {}", cfg.raw.rules.len());
+    println!(
+        "{} {} {}",
+        styled("editors:", muted()),
+        if editor_names.is_empty() {
+            styled("<none>", dim())
+        } else {
+            styled(&editor_names, accent())
+        },
+        styled(format!("({})", cfg.raw.editors.len()), dim()),
+    );
+    println!(
+        "{} {}",
+        styled("rules:", muted()),
+        styled(cfg.raw.rules.len(), accent()),
+    );
     println!();
 
     let mut issues = 0usize;
@@ -145,15 +158,19 @@ pub async fn doctor(cli: &Cli) -> Result<()> {
         if !rule.editor.contains("{{") && !rule.editor.contains("{%") {
             if !cfg.raw.editors.contains_key(&rule.editor) {
                 println!(
-                    "error rule[{i}] ({name}): editor '{}' is not defined in [editors.*]",
-                    rule.editor
+                    "{} {}: editor {} is not defined in [editors.*]",
+                    styled("error", level_error()),
+                    styled(format!("rule[{i}] ({name})"), bold()),
+                    styled(format!("'{}'", rule.editor), accent()),
                 );
                 issues += 1;
             }
         } else {
             println!(
-                "info  rule[{i}] ({name}): editor '{}' is a Tera template, resolved at dispatch time",
-                rule.editor
+                "{}  {}: editor {} is a Tera template, resolved at dispatch time",
+                styled("info", level_info()),
+                styled(format!("rule[{i}] ({name})"), bold()),
+                styled(format!("'{}'", rule.editor), accent()),
             );
         }
     }
@@ -176,7 +193,10 @@ pub async fn doctor(cli: &Cli) -> Result<()> {
             let name = rule.name.as_deref().unwrap_or("<unnamed>");
             let ca_name = cfg.raw.rules[ca].name.as_deref().unwrap_or("<unnamed>");
             println!(
-                "warn  rule[{i}] ({name}): unreachable — preceded by rule[{ca}] ({ca_name}) with catch-all match and no exclude"
+                "{}  {}: unreachable — preceded by {} with catch-all match and no exclude",
+                styled("warn", level_warn()),
+                styled(format!("rule[{i}] ({name})"), bold()),
+                styled(format!("rule[{ca}] ({ca_name})"), bold()),
             );
             issues += 1;
         }
@@ -186,7 +206,8 @@ pub async fn doctor(cli: &Cli) -> Result<()> {
     //    skipped (with a warn log), which usually isn't what the user wants.
     if catch_all_at.is_none() {
         println!(
-            "warn  no catch-all rule at end of config — paths that match no rule (or are excluded from every rule) will be skipped with a warning"
+            "{}  no catch-all rule at end of config — paths that match no rule (or are excluded from every rule) will be skipped with a warning",
+            styled("warn", level_warn()),
         );
         issues += 1;
     }
@@ -201,7 +222,9 @@ pub async fn doctor(cli: &Cli) -> Result<()> {
     for (name, idxs) in seen.iter() {
         if idxs.len() > 1 {
             println!(
-                "warn  duplicate rule name '{name}' at indices {idxs:?} — use distinct names for readability"
+                "{}  duplicate rule name {} at indices {idxs:?} — use distinct names for readability",
+                styled("warn", level_warn()),
+                styled(format!("'{name}'"), accent()),
             );
             issues += 1;
         }
@@ -209,7 +232,7 @@ pub async fn doctor(cli: &Cli) -> Result<()> {
 
     println!();
     if issues == 0 {
-        println!("no issues found");
+        println!("{} no issues found", styled("ok", level_ok()));
         Ok(())
     } else {
         bail!("{issues} issue(s) found")
@@ -484,16 +507,27 @@ fn render_arg_list(
 
 fn print_plan(plan: &[Batch]) {
     if plan.is_empty() {
-        println!("no matching batches");
+        println!("{}", styled("no matching batches", dim()));
         return;
     }
     for (i, b) in plan.iter().enumerate() {
+        let sync_label = if b.sync { "sync" } else { "async" };
+        let sync_style = if b.sync { level_warn() } else { level_info() };
         println!(
-            "[{i}] editor={} group={} mode={:?} sync={} rule={}",
-            b.editor_name, b.group, b.mode, b.sync, b.rule_name
+            "{} editor={} group={} mode={} {} rule={}",
+            styled(format!("[{i}]"), muted()),
+            styled(&b.editor_name, accent()),
+            styled(&b.group, accent()),
+            styled(format!("{:?}", b.mode).to_lowercase(), level_info()),
+            styled(sync_label, sync_style),
+            styled(&b.rule_name, bold()),
         );
         for f in &b.files {
-            println!("      - {}", strip_verbatim(&f.to_string_lossy()));
+            println!(
+                "      {} {}",
+                styled("-", muted()),
+                styled(strip_verbatim(&f.to_string_lossy()), dim()),
+            );
         }
     }
 }

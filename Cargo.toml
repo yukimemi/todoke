@@ -1,6 +1,6 @@
 [package]
 name = "edtr"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2024"
 rust-version = "1.85"
 description = "An editor router/transfer tool that dispatches files to the right editor based on rules."
@@ -35,8 +35,10 @@ clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 directories = "5"
 nvim-rs = { version = "0.9", features = ["use_tokio"] }
+owo-colors = "4"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
+supports-color = "3"
 tera = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }

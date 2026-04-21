@@ -7,6 +7,7 @@ mod dispatcher;
 mod editors;
 mod matcher;
 mod platform;
+mod style;
 mod template;
 
 use cli::{Cli, Command};
