@@ -61,3 +61,15 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets -- -D warnings
+
+  lockfile:
+    # Catches stale Cargo.lock (e.g. version bumped in Cargo.toml but lock
+    # still points at the old version) before it reaches the publish job,
+    # which uses --locked and would otherwise fail there.
+    name: cargo lockfile in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked --all-targets
