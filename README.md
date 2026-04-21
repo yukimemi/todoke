@@ -212,31 +212,6 @@ Right-click a `.txt` → Open with → Choose another app → Browse → point a
 `todoke.exe`. `todoke` honors the rules and opens the file in the correct
 handler, spawning a new console if the target is a TUI.
 
-### Migrating from `edtr` (or todoke 0.1.x)
-
-The schema changed in 0.2.0:
-
-```
-v0.1.x                               → v0.2.0
-------------------------------------   --------------------------------
-[editors.<name>]                       [todoke.<name>]
-kind = "generic"                       (optional, defaults to "exec")
-args_new = [...]                       [todoke.<name>.args] new = [...]
-args_remote = [...]                    [todoke.<name>.args] remote = [...]
-rule.editor = "..."                    rule.to = "..."
-```
-
-```sh
-# Linux / macOS config dir (if still using the edtr name)
-mv ~/.config/edtr ~/.config/todoke
-mv ~/.config/todoke/edtr.toml ~/.config/todoke/todoke.toml
-
-# Update env var if you set it
-export EDITOR=todoke
-```
-
-`TODOKE_CONFIG` replaces `EDTR_CONFIG` as the env override.
-
 ## Configuration reference
 
 ### `[vars]`
