@@ -109,6 +109,113 @@ pub async fn check(cli: &Cli, files: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
+/// Static analysis of the loaded config.
+/// Exits with a non-zero status when any issue is flagged at warn level or
+/// higher, so `edtr doctor` is useful as a pre-commit / CI gate.
+pub async fn doctor(cli: &Cli) -> Result<()> {
+    let cfg = config::load(cli.config.as_deref())?;
+    let path = config::resolve_path(cli.config.as_deref())?;
+
+    println!("config: {}", path.display());
+    let editor_names = cfg
+        .raw
+        .editors
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!(
+        "editors: {} ({})",
+        if editor_names.is_empty() {
+            "<none>".into()
+        } else {
+            editor_names
+        },
+        cfg.raw.editors.len()
+    );
+    println!("rules: {}", cfg.raw.rules.len());
+    println!();
+
+    let mut issues = 0usize;
+
+    // 1. rule.editor references that are literal strings (not templates) must
+    //    resolve to a known editor. Templates are checked at dispatch time.
+    for (i, rule) in cfg.raw.rules.iter().enumerate() {
+        let name = rule.name.as_deref().unwrap_or("<unnamed>");
+        if !rule.editor.contains("{{") && !rule.editor.contains("{%") {
+            if !cfg.raw.editors.contains_key(&rule.editor) {
+                println!(
+                    "error rule[{i}] ({name}): editor '{}' is not defined in [editors.*]",
+                    rule.editor
+                );
+                issues += 1;
+            }
+        } else {
+            println!(
+                "info  rule[{i}] ({name}): editor '{}' is a Tera template, resolved at dispatch time",
+                rule.editor
+            );
+        }
+    }
+
+    // 2. unreachable rules — anything after a literal catch-all (match='.*',
+    //    no exclude) is dead code.
+    let mut catch_all_at: Option<usize> = None;
+    for (i, rule) in cfg.raw.rules.iter().enumerate() {
+        if rule.exclude.is_some() {
+            continue;
+        }
+        let patterns = rule.match_.as_slice();
+        if patterns.iter().any(|p| *p == ".*" || *p == "^.*$") {
+            catch_all_at = Some(i);
+            break;
+        }
+    }
+    if let Some(ca) = catch_all_at {
+        for (i, rule) in cfg.raw.rules.iter().enumerate().skip(ca + 1) {
+            let name = rule.name.as_deref().unwrap_or("<unnamed>");
+            let ca_name = cfg.raw.rules[ca].name.as_deref().unwrap_or("<unnamed>");
+            println!(
+                "warn  rule[{i}] ({name}): unreachable — preceded by rule[{ca}] ({ca_name}) with catch-all match and no exclude"
+            );
+            issues += 1;
+        }
+    }
+
+    // 3. no catch-all at the end — paths that match no rule are silently
+    //    skipped (with a warn log), which usually isn't what the user wants.
+    if catch_all_at.is_none() {
+        println!(
+            "warn  no catch-all rule at end of config — paths that match no rule (or are excluded from every rule) will be skipped with a warning"
+        );
+        issues += 1;
+    }
+
+    // 4. duplicate rule names — confusing in `check` / `doctor` output.
+    let mut seen: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+    for (i, rule) in cfg.raw.rules.iter().enumerate() {
+        if let Some(n) = rule.name.as_deref() {
+            seen.entry(n).or_default().push(i);
+        }
+    }
+    for (name, idxs) in seen.iter() {
+        if idxs.len() > 1 {
+            println!(
+                "warn  duplicate rule name '{name}' at indices {idxs:?} — use distinct names for readability"
+            );
+            issues += 1;
+        }
+    }
+
+    println!();
+    if issues == 0 {
+        println!("no issues found");
+        Ok(())
+    } else {
+        bail!("{issues} issue(s) found")
+    }
+}
+
 pub async fn list(_alive_only: bool) -> Result<()> {
     bail!("list: not implemented yet (v0.2)")
 }

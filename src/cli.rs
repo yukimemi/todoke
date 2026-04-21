@@ -23,7 +23,8 @@ pub struct Cli {
         short = 'c',
         long = "config",
         value_name = "PATH",
-        help = "Override config path"
+        help = "Override config path",
+        global = true
     )]
     pub config: Option<PathBuf>,
 
@@ -92,6 +93,11 @@ pub enum Command {
         #[arg(value_name = "FILES", required = true)]
         files: Vec<PathBuf>,
     },
+
+    #[command(
+        about = "Inspect the config for common footguns (unreachable rules, uncovered paths, …)"
+    )]
+    Doctor,
 
     #[command(subcommand, about = "Inspect or edit the config file")]
     Config(config::ConfigSub),

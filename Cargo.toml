@@ -1,6 +1,6 @@
 [package]
 name = "edtr"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2024"
 rust-version = "1.85"
 description = "An editor router/transfer tool that dispatches files to the right editor based on rules."
