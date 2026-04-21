@@ -149,8 +149,10 @@ todoke https://github.com/yukimemi/todoke
 # Raw strings match rules too. Captures are available as {{ cap.N }}.
 todoke issue:42      # → firefox opens issues/42
 
-# Force interpretation with --as when auto-detection would get it wrong
-todoke --as raw ./Cargo.toml
+# Force interpretation with --as when auto-detection would get it wrong.
+# Example: a file named "HEAD" exists in cwd but you want "HEAD" routed
+# as a raw git-ref string to whatever rule handles refs.
+todoke --as raw HEAD
 
 # See which rule would match, without actually dispatching
 todoke check notes.md https://example.com issue:42
@@ -274,7 +276,7 @@ A delivery target (the value behind a rule's `to = "<name>"`).
 | field     | type                      | default      | meaning                                      |
 | --------- | ------------------------- | ------------ | -------------------------------------------- |
 | `name`    | string                    | `rule[N]`    | human-readable label (shown in `check`)      |
-| `match`   | regex string or `[regex]` | required     | pattern(s) against the input; files are normalized to `/` before matching, URLs are matched as-is |
+| `match`   | regex string or `[regex]` | required     | pattern(s) against the input; files are normalized to `/` before matching, URLs and raw strings are matched as-is |
 | `exclude` | regex string or `[regex]` | none         | when any `exclude` hits, the rule is skipped even if `match` hits — todoke falls through to the next rule |
 | `to`      | string (Tera-templated)   | required     | key into `[todoke.*]`                        |
 | `group`   | string                    | `"default"`  | instance identity (one nvim per group)       |
@@ -289,7 +291,7 @@ Available in `rule.group`, `rule.to`, `todoke.*.command`, `todoke.*.listen`,
 | variable        | example                             | populated for |
 | --------------- | ----------------------------------- | ------------- |
 | `input`         | `/tmp/foo.md` or `https://…`        | always        |
-| `input_type`    | `"file"` or `"url"`                 | always        |
+| `input_type`    | `"file"` / `"url"` / `"raw"`         | always        |
 | `file_path`     | `C:/Users/you/notes/todo.md`        | file inputs   |
 | `file_dir`      | `C:/Users/you/notes`                | file inputs   |
 | `file_name`     | `todo.md`                           | file inputs   |
@@ -310,6 +312,11 @@ Available in `rule.group`, `rule.to`, `todoke.*.command`, `todoke.*.listen`,
 | `cap.<name>`    | named capture groups `(?P<name>…)`  | when defined        |
 | `vars.<key>`    | your `[vars]` entries               | always        |
 | `env.<KEY>`     | process env at todoke invocation    | always        |
+
+`kind = "neovim"` targets accept **file inputs only** — URLs and raw
+strings routed to a neovim target are logged and skipped. Route those to
+a `kind = "exec"` target (e.g. a browser for URLs, any CLI that consumes
+the raw string for `"raw"`).
 
 And these todoke-specific Tera functions:
 
