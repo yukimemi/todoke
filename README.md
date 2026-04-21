@@ -162,14 +162,15 @@ proj_root = "/home/me/src"
 
 ### `[[rules]]`
 
-| field    | type                     | default      | meaning                                      |
-| -------- | ------------------------ | ------------ | -------------------------------------------- |
-| `name`   | string                   | `rule[N]`    | human-readable label (shown in `check`)      |
-| `match`  | regex string or `[regex]` | required     | path pattern(s); paths are normalized to `/` before matching |
-| `editor` | string                   | required     | key from `[editors.*]`                       |
-| `group`  | string                   | `"default"`  | instance identity (one nvim per group)       |
-| `mode`   | `"remote"` / `"new"`     | `"remote"`   | `remote` = reuse existing, `new` = always fresh |
-| `sync`   | bool                     | `false`      | `true` = block until editor exits            |
+| field     | type                      | default      | meaning                                      |
+| --------- | ------------------------- | ------------ | -------------------------------------------- |
+| `name`    | string                    | `rule[N]`    | human-readable label (shown in `check`)      |
+| `match`   | regex string or `[regex]` | required     | path pattern(s); paths are normalized to `/` before matching |
+| `exclude` | regex string or `[regex]` | none         | when any `exclude` hits, the rule is skipped even if `match` hits — edtr falls through to the next rule |
+| `editor`  | string                    | required     | key from `[editors.*]`                       |
+| `group`   | string                    | `"default"`  | instance identity (one nvim per group)       |
+| `mode`    | `"remote"` / `"new"`      | `"remote"`   | `remote` = reuse existing, `new` = always fresh |
+| `sync`    | bool                      | `false`      | `true` = block until editor exits            |
 
 ### Template context
 

@@ -55,6 +55,11 @@ pub struct Rule {
     pub name: Option<String>,
     #[serde(rename = "match")]
     pub match_: StringOrVec,
+    /// Negative filter. When any `exclude` pattern hits the path, this rule
+    /// does NOT apply even if `match` hits — edtr keeps looking at
+    /// subsequent rules. Accepts a single pattern or an array.
+    #[serde(default)]
+    pub exclude: Option<StringOrVec>,
     pub editor: String,
     #[serde(default)]
     pub group: Option<String>,
@@ -99,6 +104,9 @@ fn is_template(s: &str) -> bool {
 pub struct ResolvedConfig {
     pub raw: Config,
     pub rule_regexes: Vec<Vec<Regex>>,
+    /// Parallel to [`Self::rule_regexes`]. Empty Vec for rules without an
+    /// `exclude` clause.
+    pub rule_excludes: Vec<Vec<Regex>>,
 }
 
 impl ResolvedConfig {
@@ -150,7 +158,30 @@ impl ResolvedConfig {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(Self { raw, rule_regexes })
+        // compile all exclude regexes (empty Vec when the rule has no exclude)
+        let rule_excludes = raw
+            .rules
+            .iter()
+            .enumerate()
+            .map(|(i, rule)| match &rule.exclude {
+                None => Ok(Vec::new()),
+                Some(patterns) => patterns
+                    .as_slice()
+                    .iter()
+                    .map(|p| {
+                        Regex::new(p).with_context(|| {
+                            format!("rule[{i}]: failed to compile exclude pattern '{p}'")
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>(),
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self {
+            raw,
+            rule_regexes,
+            rule_excludes,
+        })
     }
 }
 

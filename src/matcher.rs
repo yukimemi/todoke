@@ -48,15 +48,23 @@ pub fn vim_path(p: &Path) -> String {
     }
 }
 
-/// Find the first rule whose patterns match `normalized_path`. Returns the
-/// rule's index in [`ResolvedConfig::raw::rules`].
+/// Find the first rule whose patterns match `normalized_path`. A rule counts
+/// as matching when ANY of its `match` patterns hits AND NONE of its
+/// `exclude` patterns hits. Returns the rule's index in
+/// [`ResolvedConfig::raw::rules`].
 pub fn first_match(cfg: &ResolvedConfig, normalized_path: &str) -> Option<usize> {
     for (i, regexes) in cfg.rule_regexes.iter().enumerate() {
-        for re in regexes {
-            if re.is_match(normalized_path) {
-                return Some(i);
-            }
+        let matched = regexes.iter().any(|re| re.is_match(normalized_path));
+        if !matched {
+            continue;
         }
+        let excluded = cfg.rule_excludes[i]
+            .iter()
+            .any(|re| re.is_match(normalized_path));
+        if excluded {
+            continue;
+        }
+        return Some(i);
     }
     None
 }
@@ -176,6 +184,49 @@ mod tests {
         assert_eq!(first_match(&cfg, "/tmp/x.rs"), Some(0));
         assert_eq!(first_match(&cfg, "/tmp/x.toml"), Some(0));
         assert_eq!(first_match(&cfg, "/tmp/x.md"), None);
+    }
+
+    #[test]
+    fn exclude_single_pattern_skips_rule() {
+        let text = r#"
+            [editors.a]
+            kind = "generic"
+            command = "echo"
+
+            [[rules]]
+            name = "code"
+            match = '.*'
+            exclude = '\.md$'
+            editor = "a"
+
+            [[rules]]
+            name = "fallback"
+            match = '.*'
+            editor = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        // .rs file → first rule wins
+        assert_eq!(first_match(&cfg, "/x/foo.rs"), Some(0));
+        // .md file → first rule excluded, falls through
+        assert_eq!(first_match(&cfg, "/x/foo.md"), Some(1));
+    }
+
+    #[test]
+    fn exclude_array_is_or() {
+        let text = r#"
+            [editors.a]
+            kind = "generic"
+            command = "echo"
+
+            [[rules]]
+            match = '.*'
+            exclude = ['\.md$', '/tmp/']
+            editor = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        assert_eq!(first_match(&cfg, "/x/foo.rs"), Some(0));
+        assert_eq!(first_match(&cfg, "/x/foo.md"), None);
+        assert_eq!(first_match(&cfg, "/tmp/foo.rs"), None);
     }
 
     #[test]
