@@ -157,6 +157,45 @@ todoke --dry-run notes.md
 todoke doctor
 ```
 
+### Recipe: one target, many variants
+
+Neovim has several front-ends — `nvim` itself, `neovide`, `nvim-qt`, … —
+and you'll probably want to swap between them without rewriting rules.
+Because the whole config is pre-rendered through Tera, a list in `[vars]`
+plus a single conditional covers every combination:
+
+```toml
+[vars]
+# Swap this line to switch front-ends.
+gui = "neovide"
+# Wrappers that forward CLI args to an embedded nvim only after `--`.
+# Raw `nvim` is not in this list because it would treat args after `--`
+# as filenames.
+wrapper_guis = ["neovide", "nvim-qt"]
+
+[todoke.gui]
+kind = "neovim"
+command = "{{ vars.gui }}"
+listen = '{% if is_windows() %}\\.\pipe\nvim-todoke-{{ group }}{% else %}/tmp/nvim-todoke-{{ group }}.sock{% endif %}'
+
+{% if vars.gui in vars.wrapper_guis %}
+[todoke.gui.args]
+remote = ["--"]
+{% endif %}
+
+[[rules]]
+match = '.*'
+to = "gui"
+mode = "remote"
+```
+
+- `vars.gui = "nvim"` → `nvim FILE --listen PIPE`
+- `vars.gui = "neovide"` → `neovide FILE -- --listen PIPE`
+- `vars.gui = "nvim-qt"` → `nvim-qt FILE -- --listen PIPE`
+
+One target definition, three valid command lines. Adding a new wrapper in
+the future is one entry in `wrapper_guis`.
+
 ### As `$EDITOR`
 
 ```sh
