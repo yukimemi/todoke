@@ -44,11 +44,11 @@
   <!-- Arrow: input → core -->
   <path d="M 155 113 L 235 113" stroke="#e85c85" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
 
-  <!-- Core: wordmark "todoke" with a small sakura accent beside it.
+  <!-- Core: wordmark "todoke" with a small sakura accent above it.
        Inline 5-petal sakura — no <symbol>/<use> so no rendering glitches.
-       Scaled down so it's decorative, not a billboard. -->
-  <g transform="translate(322 98) scale(0.42)">
-    <g fill="#ffffff" stroke="#e85c85" stroke-width="6" stroke-linejoin="round">
+       Scaled ~0.55 for a more present but still decorative blossom. -->
+  <g transform="translate(322 80) scale(0.55)">
+    <g fill="#ffffff" stroke="#e85c85" stroke-width="5" stroke-linejoin="round">
       <path d="M 0 0 C -22 -22 -38 -52 -14 -72 L -4 -62 L 0 -72 L 4 -62 L 14 -72 C 38 -52 22 -22 0 0 Z"/>
       <path transform="rotate(72)"
             d="M 0 0 C -22 -22 -38 -52 -14 -72 L -4 -62 L 0 -72 L 4 -62 L 14 -72 C 38 -52 22 -22 0 0 Z"/>
@@ -59,11 +59,11 @@
       <path transform="rotate(288)"
             d="M 0 0 C -22 -22 -38 -52 -14 -72 L -4 -62 L 0 -72 L 4 -62 L 14 -72 C 38 -52 22 -22 0 0 Z"/>
     </g>
-    <circle r="11" fill="#ffd23f" stroke="#e85c85" stroke-width="4"/>
+    <circle r="11" fill="#ffd23f" stroke="#e85c85" stroke-width="3"/>
   </g>
 
   <!-- Wordmark -->
-  <text x="322" y="145" text-anchor="middle" fill="#ffffff" stroke="#b33a5c" stroke-width="0.7"
+  <text x="322" y="150" text-anchor="middle" fill="#ffffff" stroke="#b33a5c" stroke-width="0.7"
         font-size="40" font-weight="800" letter-spacing="3">todoke</text>
 
   <!-- Arrows fanning out to generic destinations -->

@@ -46,10 +46,4 @@
           d="M 0 0 C -10 -10 -15 -24 -4 -29 L -1 -23 L 0 -29 L 1 -23 L 4 -29 C 15 -24 10 -10 0 0 Z"/>
   </g>
 
-  <!-- One petal poking out from behind the envelope at top-right, like
-       it's inside the letter and peeking out. Adds whimsy. -->
-  <g transform="translate(188 72) rotate(50)">
-    <path d="M 0 0 C -11 -11 -16 -26 -4 -32 L -1 -25 L 0 -32 L 1 -25 L 4 -32 C 16 -26 11 -11 0 0 Z"
-          fill="#ffc0cb" stroke="#e85c85" stroke-width="3" stroke-linejoin="round"/>
-  </g>
 </svg>
