@@ -1,6 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <defs>
-    <!-- Warm sakura-pink gradient (君に届け inspired) -->
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#ffe4ec"/>
       <stop offset="60%" stop-color="#ffb9cd"/>
@@ -10,40 +9,47 @@
       <stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/>
       <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="petal" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="envelope" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#ffffff"/>
       <stop offset="100%" stop-color="#fff0f5"/>
     </linearGradient>
   </defs>
 
   <!-- Rounded plate -->
-  <rect x="0" y="0" width="256" height="256" rx="44" fill="url(#bg)"/>
-  <!-- Soft highlight in the middle -->
-  <circle cx="128" cy="128" r="90" fill="url(#glow)"/>
+  <rect width="256" height="256" rx="44" fill="url(#bg)"/>
+  <circle cx="128" cy="128" r="96" fill="url(#glow)"/>
 
-  <!-- 5-petal sakura. Petal path: rounded with a tip notch — the classic 桜 silhouette. -->
+  <!-- Envelope — the "届け" metaphor: a letter to deliver.
+       Centered, sized ~60% of the plate so it reads at 16px. -->
   <g transform="translate(128 128)">
-    <g fill="url(#petal)" stroke="#e85c85" stroke-width="3" stroke-linejoin="round">
-      <path id="p" d="M 0 0 C -22 -22 -38 -52 -14 -72 L -4 -62 L 0 -72 L 4 -62 L 14 -72 C 38 -52 22 -22 0 0 Z"/>
-      <use href="#p" transform="rotate(72)"/>
-      <use href="#p" transform="rotate(144)"/>
-      <use href="#p" transform="rotate(216)"/>
-      <use href="#p" transform="rotate(288)"/>
-    </g>
-    <!-- Yellow stamen center -->
-    <circle r="11" fill="#ffd23f" stroke="#e85c85" stroke-width="2"/>
-    <g fill="#e85c85">
-      <circle cx="0" cy="-5" r="1.6"/>
-      <circle cx="5" cy="2" r="1.6"/>
-      <circle cx="-5" cy="2" r="1.6"/>
-      <circle cx="3" cy="-3" r="1.2"/>
-      <circle cx="-3" cy="-3" r="1.2"/>
-    </g>
+    <!-- body -->
+    <rect x="-74" y="-46" width="148" height="92" rx="10"
+          fill="url(#envelope)" stroke="#e85c85" stroke-width="6" stroke-linejoin="round"/>
+    <!-- fold flap -->
+    <path d="M -71 -43 L 0 14 L 71 -43" fill="none" stroke="#e85c85" stroke-width="6" stroke-linejoin="round"/>
   </g>
 
-  <!-- Small fallen petal in the corner, suggesting motion -->
-  <g transform="translate(210 210) rotate(35)">
-    <path d="M 0 0 C -6 -6 -10 -14 -4 -20 L -1 -17 L 0 -20 L 1 -17 L 4 -20 C 10 -14 6 -6 0 0 Z"
-          fill="#fff0f5" stroke="#e85c85" stroke-width="1.5" stroke-linejoin="round" opacity="0.9"/>
+  <!-- Sakura petals scattered around (deco + reinforces the sakura theme).
+       Simple tear-drop shape: pointed top, rounded bottom. -->
+  <g fill="#ffffff" stroke="#e85c85" stroke-width="3" stroke-linejoin="round">
+    <!-- top-left, 1 petal -->
+    <path transform="translate(52 52) rotate(-20)"
+          d="M 0 0 C -14 -14 -20 -32 -6 -38 L -2 -30 L 0 -38 L 2 -30 L 6 -38 C 20 -32 14 -14 0 0 Z"/>
+    <!-- top-right -->
+    <path transform="translate(212 64) rotate(30)"
+          d="M 0 0 C -12 -12 -18 -28 -5 -34 L -2 -27 L 0 -34 L 2 -27 L 5 -34 C 18 -28 12 -12 0 0 Z"/>
+    <!-- bottom-right -->
+    <path transform="translate(210 210) rotate(170)"
+          d="M 0 0 C -12 -12 -18 -28 -5 -34 L -2 -27 L 0 -34 L 2 -27 L 5 -34 C 18 -28 12 -12 0 0 Z"/>
+    <!-- bottom-left -->
+    <path transform="translate(48 206) rotate(-150)"
+          d="M 0 0 C -10 -10 -15 -24 -4 -29 L -1 -23 L 0 -29 L 1 -23 L 4 -29 C 15 -24 10 -10 0 0 Z"/>
+  </g>
+
+  <!-- One petal poking out from behind the envelope at top-right, like
+       it's inside the letter and peeking out. Adds whimsy. -->
+  <g transform="translate(188 72) rotate(50)">
+    <path d="M 0 0 C -11 -11 -16 -26 -4 -32 L -1 -25 L 0 -32 L 1 -25 L 4 -32 C 16 -26 11 -11 0 0 Z"
+          fill="#ffc0cb" stroke="#e85c85" stroke-width="3" stroke-linejoin="round"/>
   </g>
 </svg>
