@@ -3,19 +3,21 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
+use crate::input::InputKind;
+
 pub mod config;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "todoke",
     version,
-    about = "A rule-driven file dispatcher: hands incoming file paths to the right editor or script based on TOML-defined rules.",
+    about = "A rule-driven dispatcher: hands incoming files, URLs, or raw strings to the right handler based on TOML-defined rules.",
     long_about = None,
 )]
 pub struct Cli {
     #[arg(
-        value_name = "FILES",
-        help = "Files to dispatch (no subcommand = default dispatch)"
+        value_name = "INPUTS",
+        help = "Files, URLs, or raw strings to dispatch (no subcommand = default dispatch)"
     )]
     pub files: Vec<PathBuf>,
 
@@ -32,7 +34,7 @@ pub struct Cli {
         short = 'E',
         long = "editor",
         value_name = "NAME",
-        help = "Bypass rules, force editor"
+        help = "Bypass rules, force handler"
     )]
     pub editor: Option<String>,
 
@@ -43,6 +45,14 @@ pub struct Cli {
         help = "Bypass rules, force group"
     )]
     pub group: Option<String>,
+
+    #[arg(
+        long = "as",
+        value_name = "KIND",
+        value_enum,
+        help = "Force how each argument is classified (skip auto-detection)"
+    )]
+    pub as_kind: Option<InputKind>,
 
     #[arg(
         long = "dry-run",

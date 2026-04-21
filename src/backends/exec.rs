@@ -18,6 +18,7 @@ use anyhow::{Context as _, Result, anyhow};
 use tracing::{debug, info};
 
 use crate::input::Input;
+use crate::matcher::CaptureMap;
 use crate::platform;
 use crate::template::{Context, build_context, render};
 
@@ -36,6 +37,7 @@ pub struct DispatchCtx<'a> {
     pub rule_name: &'a str,
     pub vars: &'a BTreeMap<String, toml::Value>,
     pub cwd: &'a str,
+    pub cap: &'a CaptureMap,
 }
 
 impl ExecBackend {
@@ -75,6 +77,7 @@ impl ExecBackend {
             group: dctx.group,
             rule_name: dctx.rule_name,
             vars: dctx.vars,
+            cap: dctx.cap,
         });
         let mut tera = crate::template::new_engine();
         self.args
@@ -124,6 +127,7 @@ mod tests {
         };
         let inputs = vec![Input::File(PathBuf::from("/tmp/hello.rs"))];
         let vars = BTreeMap::new();
+        let cap = CaptureMap::new();
         let dctx = DispatchCtx {
             inputs: &inputs,
             mode: "new",
@@ -132,6 +136,7 @@ mod tests {
             rule_name: "r",
             vars: &vars,
             cwd: "/tmp",
+            cap: &cap,
         };
         let args = backend.render_args(&dctx).unwrap();
         assert_eq!(args, vec!["--file=hello", "--ext=rs"]);

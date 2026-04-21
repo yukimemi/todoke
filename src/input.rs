@@ -25,27 +25,65 @@ pub fn looks_like_url(s: &str) -> bool {
 pub enum Input {
     File(PathBuf),
     Url(url::Url),
+    /// Arbitrary string — anything that's not a URL and doesn't resolve to
+    /// an existing file on disk. Opens the door to routing non-path things
+    /// like `issue:123`, `gh:owner/repo`, `HEAD`, free text, etc.
+    Raw(String),
+}
+
+/// Explicit override for how to classify an input — used by `--as`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[clap(rename_all = "lower")]
+pub enum InputKind {
+    File,
+    Url,
+    Raw,
 }
 
 impl Input {
     /// Classify `raw` and do the minimum parsing / canonicalization.
+    /// Auto-detection order: URL scheme → existing file → raw.
+    #[allow(dead_code)]
     pub fn from_arg(raw: &str) -> Result<Self> {
-        if looks_like_url(raw) {
-            let u = url::Url::parse(raw).with_context(|| format!("invalid URL: {raw}"))?;
-            return Ok(Input::Url(u));
+        Self::from_arg_as(raw, None)
+    }
+
+    /// Same as [`Self::from_arg`] but accepts an explicit override from
+    /// `--as <kind>`.
+    pub fn from_arg_as(raw: &str, force: Option<InputKind>) -> Result<Self> {
+        match force {
+            Some(InputKind::Url) => {
+                let u = url::Url::parse(raw).with_context(|| format!("invalid URL: {raw}"))?;
+                Ok(Input::Url(u))
+            }
+            Some(InputKind::File) => {
+                let p = PathBuf::from(raw)
+                    .canonicalize()
+                    .with_context(|| format!("cannot resolve path: {raw}"))?;
+                Ok(Input::File(p))
+            }
+            Some(InputKind::Raw) => Ok(Input::Raw(raw.to_string())),
+            None => {
+                if looks_like_url(raw) {
+                    let u = url::Url::parse(raw).with_context(|| format!("invalid URL: {raw}"))?;
+                    return Ok(Input::Url(u));
+                }
+                match PathBuf::from(raw).canonicalize() {
+                    Ok(p) => Ok(Input::File(p)),
+                    Err(_) => Ok(Input::Raw(raw.to_string())),
+                }
+            }
         }
-        let p = PathBuf::from(raw)
-            .canonicalize()
-            .with_context(|| format!("cannot resolve path: {raw}"))?;
-        Ok(Input::File(p))
     }
 
     /// String used for regex matching. Files are normalized (see
-    /// [`crate::matcher::normalize_path`]); URLs are matched as-is.
+    /// [`crate::matcher::normalize_path`]); URLs and raw strings are matched
+    /// as-is.
     pub fn match_string(&self) -> String {
         match self {
             Input::File(p) => crate::matcher::normalize_path(p),
             Input::Url(u) => u.as_str().to_string(),
+            Input::Raw(s) => s.clone(),
         }
     }
 
@@ -55,13 +93,14 @@ impl Input {
         match self {
             Input::File(p) => crate::matcher::strip_verbatim(&p.to_string_lossy()),
             Input::Url(u) => u.as_str().to_string(),
+            Input::Raw(s) => s.clone(),
         }
     }
 
     pub fn as_file(&self) -> Option<&Path> {
         match self {
             Input::File(p) => Some(p),
-            Input::Url(_) => None,
+            _ => None,
         }
     }
 
@@ -69,7 +108,15 @@ impl Input {
     pub fn as_url(&self) -> Option<&url::Url> {
         match self {
             Input::Url(u) => Some(u),
-            Input::File(_) => None,
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn as_raw(&self) -> Option<&str> {
+        match self {
+            Input::Raw(s) => Some(s.as_str()),
+            _ => None,
         }
     }
 
@@ -77,6 +124,7 @@ impl Input {
         match self {
             Input::File(_) => "file",
             Input::Url(_) => "url",
+            Input::Raw(_) => "raw",
         }
     }
 }
@@ -94,5 +142,28 @@ mod tests {
         assert!(!looks_like_url("C:\\Users\\x\\file.txt"));
         assert!(!looks_like_url("/home/x/file.txt"));
         assert!(!looks_like_url("./relative"));
+    }
+
+    #[test]
+    fn raw_fallback_when_not_url_or_file() {
+        // A clearly non-existent path that isn't a URL falls through to Raw.
+        let i = Input::from_arg("issue:1234").unwrap();
+        assert!(matches!(i, Input::Raw(_)));
+        assert_eq!(i.kind_label(), "raw");
+        assert_eq!(i.match_string(), "issue:1234");
+    }
+
+    #[test]
+    fn force_as_raw_skips_canonicalize() {
+        // Force raw even for something that could resolve to a file.
+        let i = Input::from_arg_as(".", Some(InputKind::Raw)).unwrap();
+        assert!(matches!(i, Input::Raw(_)));
+        assert_eq!(i.display_string(), ".");
+    }
+
+    #[test]
+    fn url_still_detected_first() {
+        let i = Input::from_arg("https://example.com/foo").unwrap();
+        assert!(matches!(i, Input::Url(_)));
     }
 }

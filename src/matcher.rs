@@ -3,10 +3,20 @@
 //! Patterns are pre-compiled in [`crate::config::ResolvedConfig::compile`] so
 //! hot-path matching is cheap. A rule matches if ANY of its `match` regexes
 //! hit AND NONE of its `exclude` regexes hit.
+//!
+//! When a rule matches, the capture groups of the specific `match` regex
+//! that hit are returned so the dispatcher can expose them to templates as
+//! `{{ cap.N }}` / `{{ cap.<name> }}`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::config::ResolvedConfig;
+
+/// Ordered map of capture name → captured text. Numbered groups use string
+/// keys `"0"`, `"1"`, ...; named groups use their declared name. The full
+/// match is always at `"0"`.
+pub type CaptureMap = BTreeMap<String, String>;
 
 /// Strip Windows verbatim prefixes, converting `\\?\UNC\server\share\...` to
 /// `\\server\share\...` and `\\?\C:\...` to `C:\...`. Everything else is
@@ -51,20 +61,42 @@ pub fn vim_path(p: &Path) -> String {
 /// Find the first rule whose patterns match `subject`. A rule counts as
 /// matching when ANY of its `match` patterns hits AND NONE of its `exclude`
 /// patterns hits. The subject is whatever string form the caller chose
-/// (normalized file path, raw URL, etc.) — see [`crate::input::Input`].
-pub fn first_match(cfg: &ResolvedConfig, subject: &str) -> Option<usize> {
+/// (normalized file path, raw URL, raw string) — see [`crate::input::Input`].
+///
+/// Returns the matching rule's index plus the [`CaptureMap`] extracted from
+/// the specific match regex that hit (empty map when nothing captured).
+pub fn first_match(cfg: &ResolvedConfig, subject: &str) -> Option<(usize, CaptureMap)> {
     for (i, regexes) in cfg.rule_regexes.iter().enumerate() {
-        let matched = regexes.iter().any(|re| re.is_match(subject));
-        if !matched {
+        let hit = regexes
+            .iter()
+            .find_map(|re| re.captures(subject).map(|c| (re, c)));
+        let Some((re, caps)) = hit else {
+            continue;
+        };
+        if cfg.rule_excludes[i].iter().any(|r| r.is_match(subject)) {
             continue;
         }
-        let excluded = cfg.rule_excludes[i].iter().any(|re| re.is_match(subject));
-        if excluded {
-            continue;
+
+        let mut map = CaptureMap::new();
+        for idx in 0..caps.len() {
+            if let Some(m) = caps.get(idx) {
+                map.insert(idx.to_string(), m.as_str().to_string());
+            }
         }
-        return Some(i);
+        for name in re.capture_names().flatten() {
+            if let Some(m) = caps.name(name) {
+                map.insert(name.to_string(), m.as_str().to_string());
+            }
+        }
+        return Some((i, map));
     }
     None
+}
+
+/// Shorter form for callers that don't want captures.
+#[allow(dead_code)]
+pub fn first_match_idx(cfg: &ResolvedConfig, subject: &str) -> Option<usize> {
+    first_match(cfg, subject).map(|(i, _)| i)
 }
 
 #[cfg(test)]
@@ -146,8 +178,8 @@ mod tests {
             to = "a"
         "#;
         let cfg = load_from_str(text).unwrap();
-        assert_eq!(first_match(&cfg, "/tmp/foo.rs"), Some(0));
-        assert_eq!(first_match(&cfg, "/tmp/README"), Some(1));
+        assert_eq!(first_match_idx(&cfg, "/tmp/foo.rs"), Some(0));
+        assert_eq!(first_match_idx(&cfg, "/tmp/README"), Some(1));
     }
 
     #[test]
@@ -161,7 +193,7 @@ mod tests {
             to = "a"
         "#;
         let cfg = load_from_str(text).unwrap();
-        assert_eq!(first_match(&cfg, "/tmp/README.md"), None);
+        assert_eq!(first_match_idx(&cfg, "/tmp/README.md"), None);
     }
 
     #[test]
@@ -175,9 +207,9 @@ mod tests {
             to = "a"
         "#;
         let cfg = load_from_str(text).unwrap();
-        assert_eq!(first_match(&cfg, "/tmp/x.rs"), Some(0));
-        assert_eq!(first_match(&cfg, "/tmp/x.toml"), Some(0));
-        assert_eq!(first_match(&cfg, "/tmp/x.md"), None);
+        assert_eq!(first_match_idx(&cfg, "/tmp/x.rs"), Some(0));
+        assert_eq!(first_match_idx(&cfg, "/tmp/x.toml"), Some(0));
+        assert_eq!(first_match_idx(&cfg, "/tmp/x.md"), None);
     }
 
     #[test]
@@ -198,8 +230,8 @@ mod tests {
             to = "a"
         "#;
         let cfg = load_from_str(text).unwrap();
-        assert_eq!(first_match(&cfg, "/x/foo.rs"), Some(0));
-        assert_eq!(first_match(&cfg, "/x/foo.md"), Some(1));
+        assert_eq!(first_match_idx(&cfg, "/x/foo.rs"), Some(0));
+        assert_eq!(first_match_idx(&cfg, "/x/foo.md"), Some(1));
     }
 
     #[test]
@@ -214,9 +246,9 @@ mod tests {
             to = "a"
         "#;
         let cfg = load_from_str(text).unwrap();
-        assert_eq!(first_match(&cfg, "/x/foo.rs"), Some(0));
-        assert_eq!(first_match(&cfg, "/x/foo.md"), None);
-        assert_eq!(first_match(&cfg, "/tmp/foo.rs"), None);
+        assert_eq!(first_match_idx(&cfg, "/x/foo.rs"), Some(0));
+        assert_eq!(first_match_idx(&cfg, "/x/foo.md"), None);
+        assert_eq!(first_match_idx(&cfg, "/tmp/foo.rs"), None);
     }
 
     #[test]
@@ -230,22 +262,81 @@ mod tests {
             to = "firefox"
         "#;
         let cfg = load_from_str(text).unwrap();
-        assert_eq!(first_match(&cfg, "https://github.com/owner/repo"), Some(0));
-        assert_eq!(first_match(&cfg, "https://gitlab.com/owner/repo"), None);
+        assert_eq!(
+            first_match_idx(&cfg, "https://github.com/owner/repo"),
+            Some(0)
+        );
+        assert_eq!(first_match_idx(&cfg, "https://gitlab.com/owner/repo"), None);
     }
 
     #[test]
     fn default_config_matches_commit_editmsg() {
         let cfg = load_from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
-        let idx = first_match(&cfg, "/home/x/repo/.git/COMMIT_EDITMSG");
+        let idx = first_match_idx(&cfg, "/home/x/repo/.git/COMMIT_EDITMSG");
         assert_eq!(idx, Some(0), "expected editor-callback rule to match");
         assert_eq!(
             cfg.rule(idx.unwrap()).name.as_deref(),
             Some("editor-callback")
         );
 
-        let idx = first_match(&cfg, "/home/x/notes/idea.md");
+        let idx = first_match_idx(&cfg, "/home/x/notes/idea.md");
         assert_eq!(idx, Some(1));
         assert_eq!(cfg.rule(idx.unwrap()).name.as_deref(), Some("default"));
+    }
+
+    #[test]
+    fn captures_numbered_groups() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = '^gh:([^/]+)/(.+)$'
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        let (idx, caps) = first_match(&cfg, "gh:yukimemi/todoke").unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(
+            caps.get("0").map(String::as_str),
+            Some("gh:yukimemi/todoke")
+        );
+        assert_eq!(caps.get("1").map(String::as_str), Some("yukimemi"));
+        assert_eq!(caps.get("2").map(String::as_str), Some("todoke"));
+    }
+
+    #[test]
+    fn captures_named_groups() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = '^JIRA-(?P<id>\d+)$'
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        let (_, caps) = first_match(&cfg, "JIRA-4321").unwrap();
+        assert_eq!(caps.get("id").map(String::as_str), Some("4321"));
+        // Numbered access still works alongside names.
+        assert_eq!(caps.get("1").map(String::as_str), Some("4321"));
+    }
+
+    #[test]
+    fn captures_empty_when_no_groups() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = '.*'
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        let (_, caps) = first_match(&cfg, "anything").unwrap();
+        // Full match still at "0".
+        assert_eq!(caps.get("0").map(String::as_str), Some("anything"));
+        // No other keys.
+        assert_eq!(caps.len(), 1);
     }
 }

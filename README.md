@@ -111,6 +111,17 @@ match = '/src/company/'
 to = "code"
 mode = "remote"
 
+# Raw strings (neither URL nor existing file) also fall through to rules —
+# capture groups are available to the handler as `{{ cap.1 }}` / `{{ cap.name }}`.
+[[rules]]
+name = "gh-issue"
+match = '^issue:(\d+)$'
+to = "firefox"
+
+[todoke.firefox]
+command = "firefox"
+args.default = ["https://github.com/yukimemi/todoke/issues/{{ cap.1 }}"]
+
 # Default: everything else goes to the shared nvim.
 [[rules]]
 name = "default"
@@ -130,8 +141,14 @@ todoke notes.md
 # profile, or any CLI that accepts URLs.
 todoke https://github.com/yukimemi/todoke
 
+# Raw strings match rules too. Captures are available as {{ cap.N }}.
+todoke issue:42      # → firefox opens issues/42
+
+# Force interpretation with --as when auto-detection would get it wrong
+todoke --as raw ./Cargo.toml
+
 # See which rule would match, without actually dispatching
-todoke check notes.md https://example.com
+todoke check notes.md https://example.com issue:42
 
 # Same dispatch logic, don't execute
 todoke --dry-run notes.md
@@ -241,6 +258,9 @@ Available in `rule.group`, `rule.to`, `todoke.*.command`, `todoke.*.listen`,
 | `cwd`           | current working directory           | always        |
 | `group`         | resolved group                      | phase 3       |
 | `rule`          | resolved rule name                  | phase 3       |
+| `cap.0`         | full match of the `match` regex     | when a rule matched |
+| `cap.1` / `cap.2` / … | numbered capture groups       | when defined        |
+| `cap.<name>`    | named capture groups `(?P<name>…)`  | when defined        |
 | `vars.<key>`    | your `[vars]` entries               | always        |
 | `env.<KEY>`     | process env at todoke invocation    | always        |
 

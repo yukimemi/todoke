@@ -13,7 +13,7 @@ use crate::backends::{
 use crate::cli::Cli;
 use crate::config::{self, ResolvedConfig, Rule, Target, TargetKind};
 use crate::input::Input;
-use crate::matcher::first_match;
+use crate::matcher::{CaptureMap, first_match};
 use crate::style::{
     accent, bold, dim, level_error, level_info, level_ok, level_warn, muted, styled,
 };
@@ -21,7 +21,7 @@ use crate::template::{Context, build_context, new_engine, render};
 
 pub async fn dispatch(cli: &Cli, files: &[PathBuf]) -> Result<()> {
     let cfg = config::load(cli.config.as_deref())?;
-    let inputs = load_inputs(files)?;
+    let inputs = load_inputs(cli, files)?;
     let plan = if inputs.is_empty() {
         plan_no_args(cli, &cfg)?
     } else {
@@ -40,15 +40,15 @@ pub async fn dispatch(cli: &Cli, files: &[PathBuf]) -> Result<()> {
 
 pub async fn check(cli: &Cli, files: &[PathBuf]) -> Result<()> {
     let cfg = config::load(cli.config.as_deref())?;
-    let inputs = load_inputs(files)?;
+    let inputs = load_inputs(cli, files)?;
     let plan = plan_batches(cli, &cfg, &inputs)?;
     print_plan(&plan);
     Ok(())
 }
 
-fn load_inputs(raws: &[PathBuf]) -> Result<Vec<Input>> {
+fn load_inputs(cli: &Cli, raws: &[PathBuf]) -> Result<Vec<Input>> {
     raws.iter()
-        .map(|p| Input::from_arg(&p.to_string_lossy()))
+        .map(|p| Input::from_arg_as(&p.to_string_lossy(), cli.as_kind))
         .collect()
 }
 
@@ -181,6 +181,8 @@ pub async fn kill(group: Option<&str>, all: bool) -> Result<()> {
 }
 
 /// One batch of inputs bound for a single (target, group, mode, sync) quad.
+/// All inputs in a batch share the same resolved target; their individual
+/// capture maps are kept so per-input arg rendering can reference them.
 #[derive(Debug)]
 pub struct Batch {
     pub target_name: String,
@@ -189,6 +191,10 @@ pub struct Batch {
     pub sync: bool,
     pub rule_name: String,
     pub inputs: Vec<Input>,
+    /// Captures from the first input that resolved to this batch — used for
+    /// rendering the target's command / listen / args templates. For a
+    /// per-input capture model see the per-input rendering in the backends.
+    pub cap: CaptureMap,
 }
 
 fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
@@ -197,13 +203,15 @@ fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
         .to_string_lossy()
         .into_owned();
 
-    let rule_idx = first_match(cfg, "").or_else(|| {
-        if (cli.editor.is_some() || cli.group.is_some()) && !cfg.raw.rules.is_empty() {
-            Some(0)
-        } else {
-            None
+    let hit = first_match(cfg, "");
+    let (rule_idx, cap) = match hit {
+        Some((i, c)) => (Some(i), c),
+        None => {
+            let fallback =
+                (cli.editor.is_some() || cli.group.is_some()) && !cfg.raw.rules.is_empty();
+            (fallback.then_some(0), CaptureMap::new())
         }
-    });
+    };
 
     let Some(rule_idx) = rule_idx else {
         bail!(
@@ -225,6 +233,7 @@ fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
         group: "",
         rule_name: &rule_name,
         vars: &cfg.raw.vars,
+        cap: &cap,
     });
 
     let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx_phase2)?;
@@ -237,6 +246,7 @@ fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
         sync: rule.sync,
         rule_name,
         inputs: Vec::new(),
+        cap,
     }])
 }
 
@@ -252,7 +262,7 @@ fn plan_batches(cli: &Cli, cfg: &ResolvedConfig, inputs: &[Input]) -> Result<Vec
     for input in inputs {
         let subject = input.match_string();
 
-        let (rule_idx, rule) = match resolve_rule(cli, cfg, &subject)? {
+        let (rule_idx, rule, cap) = match resolve_rule(cli, cfg, &subject)? {
             Some(tuple) => tuple,
             None => {
                 warn!(subject = %subject, "no rule matched, skipping");
@@ -272,6 +282,7 @@ fn plan_batches(cli: &Cli, cfg: &ResolvedConfig, inputs: &[Input]) -> Result<Vec
             group: "",
             rule_name: &rule_name,
             vars: &cfg.raw.vars,
+            cap: &cap,
         });
 
         let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx)?;
@@ -293,6 +304,7 @@ fn plan_batches(cli: &Cli, cfg: &ResolvedConfig, inputs: &[Input]) -> Result<Vec
                 sync: rule.sync,
                 rule_name: rule_name.clone(),
                 inputs: Vec::new(),
+                cap: cap.clone(),
             })
             .inputs
             .push(input.clone());
@@ -313,19 +325,19 @@ fn resolve_rule<'a>(
     cli: &Cli,
     cfg: &'a ResolvedConfig,
     subject: &str,
-) -> Result<Option<(usize, &'a Rule)>> {
+) -> Result<Option<(usize, &'a Rule, CaptureMap)>> {
     if cli.editor.is_some() || cli.group.is_some() {
         if cfg.raw.rules.is_empty() {
             bail!(
                 "--editor/--group requires at least one [[rules]] in config for mode/sync defaults"
             );
         }
-        if let Some(idx) = first_match(cfg, subject) {
-            return Ok(Some((idx, cfg.rule(idx))));
+        if let Some((idx, cap)) = first_match(cfg, subject) {
+            return Ok(Some((idx, cfg.rule(idx), cap)));
         }
-        return Ok(Some((0, cfg.rule(0))));
+        return Ok(Some((0, cfg.rule(0), CaptureMap::new())));
     }
-    Ok(first_match(cfg, subject).map(|idx| (idx, cfg.rule(idx))))
+    Ok(first_match(cfg, subject).map(|(idx, cap)| (idx, cfg.rule(idx), cap)))
 }
 
 fn resolve_group_with_ctx(
@@ -390,6 +402,7 @@ async fn run_batch(cfg: &ResolvedConfig, batch: &Batch) -> Result<()> {
         group: &batch.group,
         rule_name: &batch.rule_name,
         vars: &cfg.raw.vars,
+        cap: &batch.cap,
     });
 
     let command =
@@ -483,6 +496,7 @@ fn run_exec(
         rule_name: &batch.rule_name,
         vars,
         cwd,
+        cap: &batch.cap,
     };
     backend.dispatch(dctx)
 }

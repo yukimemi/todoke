@@ -41,6 +41,9 @@ pub struct Context<'a> {
     pub group: &'a str,
     pub rule_name: &'a str,
     pub vars: &'a BTreeMap<String, toml::Value>,
+    /// Capture groups from the matched rule's regex; keyed by index
+    /// (`"0"`, `"1"`, …) and by name. Empty when no capture / no match.
+    pub cap: &'a crate::matcher::CaptureMap,
 }
 
 fn strip_verbatim_str(s: &str) -> String {
@@ -151,7 +154,7 @@ pub fn build_context(c: Context<'_>) -> tera::Context {
                 ctx.insert(&k, &v);
             }
         }
-        None => {
+        Some(Input::Raw(_)) | None => {
             for k in EMPTY_FILE_KEYS {
                 ctx.insert(k, "");
             }
@@ -175,6 +178,10 @@ pub fn build_context(c: Context<'_>) -> tera::Context {
     let vars_map: HashMap<String, toml::Value> = c.vars.clone().into_iter().collect();
     ctx.insert("vars", &vars_map);
 
+    // cap.<N> / cap.<name>. Empty map when no capture groups matched.
+    let cap_map: HashMap<String, String> = c.cap.clone().into_iter().collect();
+    ctx.insert("cap", &cap_map);
+
     ctx
 }
 
@@ -184,6 +191,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn build(input: Option<&Input>, vars: &BTreeMap<String, toml::Value>) -> tera::Context {
+        let cap = BTreeMap::new();
         build_context(Context {
             input,
             command: "",
@@ -191,6 +199,7 @@ mod tests {
             group: "",
             rule_name: "",
             vars,
+            cap: &cap,
         })
     }
 
@@ -244,6 +253,26 @@ mod tests {
         } else {
             assert_eq!(rendered, "nW");
         }
+    }
+
+    #[test]
+    fn cap_map_exposed_in_template() {
+        let mut cap = BTreeMap::new();
+        cap.insert("0".into(), "issue:42".into());
+        cap.insert("1".into(), "42".into());
+        cap.insert("id".into(), "42".into());
+        let ctx = build_context(Context {
+            input: None,
+            command: "",
+            cwd: "/cwd",
+            group: "",
+            rule_name: "",
+            vars: &BTreeMap::new(),
+            cap: &cap,
+        });
+        let mut tera = new_engine();
+        let out = render(&mut tera, "{{ cap.0 }} / {{ cap.1 }} / {{ cap.id }}", &ctx).unwrap();
+        assert_eq!(out, "issue:42 / 42 / 42");
     }
 
     #[test]
