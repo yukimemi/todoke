@@ -1,16 +1,16 @@
 [package]
-name = "edtr"
-version = "0.1.9"
+name = "todoke"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "An editor router/transfer tool that dispatches files to the right editor based on rules."
+description = "A rule-driven file dispatcher: hands incoming file paths to the right editor or script based on TOML-defined rules."
 authors = ["yukimemi"]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/yukimemi/edtr"
-homepage = "https://github.com/yukimemi/edtr"
-documentation = "https://docs.rs/edtr"
-keywords = ["editor", "cli", "neovim", "router", "dispatcher"]
+repository = "https://github.com/yukimemi/todoke"
+homepage = "https://github.com/yukimemi/todoke"
+documentation = "https://docs.rs/todoke"
+keywords = ["dispatcher", "router", "cli", "neovim", "editor"]
 categories = ["command-line-utilities", "development-tools"]
 build = "build.rs"
 include = [

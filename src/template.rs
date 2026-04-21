@@ -1,6 +1,6 @@
 //! Tera wrapper.
 //!
-//! - Registers edtr-specific functions: `is_windows`, `is_linux`, `is_mac`.
+//! - Registers todoke-specific functions: `is_windows`, `is_linux`, `is_mac`.
 //! - Builds a per-dispatch [`tera::Context`] populated with `file_*`,
 //!   `editor_*`, `cwd`, `group`, `rule`, `vars.*`, `env.*` as established in
 //!   the design phase.
@@ -13,7 +13,7 @@ use tera::{Function, Tera, Value};
 
 use crate::platform;
 
-/// Build a fresh Tera engine with edtr's custom OS functions registered.
+/// Build a fresh Tera engine with todoke's custom OS functions registered.
 pub fn new_engine() -> Tera {
     let mut t = Tera::default();
     t.register_function("is_windows", os_fn(platform::is_windows));
@@ -186,11 +186,11 @@ mod tests {
 
     #[test]
     fn renders_env_var() {
-        unsafe { std::env::set_var("EDTR_TEST_VAR", "test_value") };
+        unsafe { std::env::set_var("TODOKE_TEST_VAR", "test_value") };
         let file = FileParts::from_path(Path::new("/tmp/x"));
         let ctx = build_context(&file, None, "/cwd", "g", "r", &BTreeMap::new());
         let mut tera = new_engine();
-        let out = render(&mut tera, "{{ env.EDTR_TEST_VAR }}", &ctx).unwrap();
+        let out = render(&mut tera, "{{ env.TODOKE_TEST_VAR }}", &ctx).unwrap();
         assert_eq!(out, "test_value");
     }
 }

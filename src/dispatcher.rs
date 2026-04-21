@@ -45,7 +45,7 @@ pub async fn dispatch(cli: &Cli, files: &[PathBuf]) -> Result<()> {
     run_plan(&cfg, plan).await
 }
 
-/// Build a single-batch plan for the no-args case (`edtr` with nothing else).
+/// Build a single-batch plan for the no-args case (`todoke` with nothing else).
 /// Matches rules against the empty string so a catch-all rule (e.g.
 /// `match = '.*'`) wins; the resulting batch carries no files and each
 /// backend is expected to interpret that as "open the editor empty".
@@ -114,7 +114,7 @@ pub async fn check(cli: &Cli, files: &[PathBuf]) -> Result<()> {
 
 /// Static analysis of the loaded config.
 /// Exits with a non-zero status when any issue is flagged at warn level or
-/// higher, so `edtr doctor` is useful as a pre-commit / CI gate.
+/// higher, so `todoke doctor` is useful as a pre-commit / CI gate.
 pub async fn doctor(cli: &Cli) -> Result<()> {
     let cfg = config::load(cli.config.as_deref())?;
     let path = config::resolve_path(cli.config.as_deref())?;

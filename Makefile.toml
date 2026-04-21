@@ -31,7 +31,7 @@ command = "cargo"
 args = ["check", "--locked", "--all-targets"]
 
 [tasks.install-local]
-description = "Install the current checkout as ~/.cargo/bin/edtr"
+description = "Install the current checkout as ~/.cargo/bin/todoke"
 command = "cargo"
 args = ["install", "--path", ".", "--force"]
 

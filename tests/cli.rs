@@ -1,6 +1,6 @@
-//! Integration tests for the `edtr` CLI.
+//! Integration tests for the `todoke` CLI.
 //!
-//! Uses `cargo run` via env!("CARGO_BIN_EXE_edtr") so no extra dependencies
+//! Uses `cargo run` via env!("CARGO_BIN_EXE_todoke") so no extra dependencies
 //! are needed beyond the standard library and tempfile.
 
 use std::io::Write;
@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_edtr"))
+    PathBuf::from(env!("CARGO_BIN_EXE_todoke"))
 }
 
 fn write_file(path: &Path, contents: &str) {
@@ -20,7 +20,7 @@ fn write_file(path: &Path, contents: &str) {
 }
 
 fn temp_dir() -> PathBuf {
-    let base = std::env::temp_dir().join("edtr-test");
+    let base = std::env::temp_dir().join("todoke-test");
     // unique-ish per test via nano timestamp
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -48,7 +48,7 @@ fn run_with(args: &[&str]) -> (bool, String, String) {
 fn help_succeeds() {
     let (ok, out, _) = run_with(&["--help"]);
     assert!(ok);
-    assert!(out.contains("edtr"));
+    assert!(out.contains("todoke"));
     assert!(out.contains("dispatch"));
 }
 
@@ -56,13 +56,13 @@ fn help_succeeds() {
 fn version_succeeds() {
     let (ok, out, _) = run_with(&["--version"]);
     assert!(ok);
-    assert!(out.contains("edtr"));
+    assert!(out.contains("todoke"));
 }
 
 #[test]
 fn no_args_uses_default_rule() {
     let dir = temp_dir();
-    let config = dir.join("edtr.toml");
+    let config = dir.join("todoke.toml");
     write_file(
         &config,
         r#"
@@ -86,7 +86,7 @@ fn no_args_uses_default_rule() {
 #[test]
 fn no_args_no_rules_errors() {
     let dir = temp_dir();
-    let config = dir.join("edtr.toml");
+    let config = dir.join("todoke.toml");
     write_file(
         &config,
         r#"
@@ -117,7 +117,7 @@ fn dry_run_plans_default_rule() {
     let file = dir.join("note.md");
     write_file(&file, "hello\n");
 
-    let config = dir.join("edtr.toml");
+    let config = dir.join("todoke.toml");
     write_file(
         &config,
         r#"
@@ -155,7 +155,7 @@ fn check_shows_matched_rule_per_file() {
     write_file(&rs_file, "fn main(){}\n");
     write_file(&md_file, "# hi\n");
 
-    let config = dir.join("edtr.toml");
+    let config = dir.join("todoke.toml");
     write_file(
         &config,
         r#"
@@ -194,7 +194,7 @@ fn completion_bash_outputs_script() {
     let (ok, out, _err) = run_with(&["completion", "bash"]);
     assert!(ok);
     assert!(
-        out.contains("_edtr()"),
+        out.contains("_todoke()"),
         "stdout head: {}",
         &out[..out.len().min(200)]
     );

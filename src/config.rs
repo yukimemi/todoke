@@ -56,7 +56,7 @@ pub struct Rule {
     #[serde(rename = "match")]
     pub match_: StringOrVec,
     /// Negative filter. When any `exclude` pattern hits the path, this rule
-    /// does NOT apply even if `match` hits — edtr keeps looking at
+    /// does NOT apply even if `match` hits — todoke keeps looking at
     /// subsequent rules. Accepts a single pattern or an array.
     #[serde(default)]
     pub exclude: Option<StringOrVec>,
@@ -185,26 +185,26 @@ impl ResolvedConfig {
     }
 }
 
-/// Resolve which config file edtr should load.
+/// Resolve which config file todoke should load.
 ///
 /// Priority:
 /// 1. Explicit `--config <path>` argument.
-/// 2. `$EDTR_CONFIG` env var.
-/// 3. `~/.config/edtr/edtr.toml` on every platform. We deliberately pick the
-///    XDG-style layout on Windows too (instead of `%APPDATA%\edtr\`) so the
-///    same dotfiles repo works everywhere — the common setup for users of
-///    chezmoi / stow / yadm, who put configs under `.config/` on all OSes.
+/// 2. `$TODOKE_CONFIG` env var.
+/// 3. `~/.config/todoke/todoke.toml` on every platform. We deliberately pick
+///    the XDG-style layout on Windows too (instead of `%APPDATA%\todoke\`) so
+///    the same dotfiles repo works everywhere — the common setup for users
+///    of chezmoi / stow / yadm, who put configs under `.config/` on all OSes.
 pub fn resolve_path(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(p) = explicit {
         return Ok(p.to_path_buf());
     }
-    if let Ok(env_path) = std::env::var("EDTR_CONFIG") {
+    if let Ok(env_path) = std::env::var("TODOKE_CONFIG") {
         return Ok(PathBuf::from(env_path));
     }
     let home = BaseDirs::new()
         .map(|d| d.home_dir().to_path_buf())
         .ok_or_else(|| anyhow!("could not determine home directory"))?;
-    Ok(home.join(".config").join("edtr").join("edtr.toml"))
+    Ok(home.join(".config").join("todoke").join("todoke.toml"))
 }
 
 /// Load + parse config. Falls back to the embedded default when the file does
@@ -253,7 +253,7 @@ pub fn load_from_str(text: &str) -> Result<ResolvedConfig> {
 ///   via a lightweight line scan (so we can populate vars without having to
 ///   parse the whole — still-templated — file as valid TOML yet).
 /// - `env.*` — process env vars.
-/// - `is_windows()` / `is_linux()` / `is_mac()` — edtr-provided.
+/// - `is_windows()` / `is_linux()` / `is_mac()` — todoke-provided.
 /// - Dispatch-time placeholders (`file_path`, `group`, `rule`, …) are inserted
 ///   as self-referential strings (`"{{ group }}"`) so those tokens pass
 ///   through pre-render unchanged and get rendered later with real values in
@@ -451,7 +451,7 @@ mod tests {
             [editors.nvim]
             kind = "neovim"
             command = "nvim"
-            listen = '/tmp/nvim-edtr-{{ group }}.sock'
+            listen = '/tmp/nvim-todoke-{{ group }}.sock'
 
             [[rules]]
             match = ".*"
@@ -461,7 +461,7 @@ mod tests {
         let cfg = load_from_str(src).unwrap();
         assert_eq!(
             cfg.raw.editors["nvim"].listen.as_deref(),
-            Some("/tmp/nvim-edtr-{{ group }}.sock"),
+            Some("/tmp/nvim-todoke-{{ group }}.sock"),
         );
         assert_eq!(cfg.raw.rules[0].group.as_deref(), Some("{{ file_stem }}"));
     }

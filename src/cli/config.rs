@@ -5,7 +5,7 @@ use clap::Subcommand;
 pub enum ConfigSub {
     #[command(about = "Print resolved config file path")]
     Path,
-    #[command(about = "Open the config file through edtr itself")]
+    #[command(about = "Open the config file through todoke itself")]
     Edit,
     #[command(about = "Validate TOML syntax and Tera templates")]
     Validate,

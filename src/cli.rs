@@ -7,9 +7,9 @@ pub mod config;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "edtr",
+    name = "todoke",
     version,
-    about = "An editor router/transfer tool that dispatches files to the right editor based on rules.",
+    about = "A rule-driven file dispatcher: hands incoming file paths to the right editor or script based on TOML-defined rules.",
     long_about = None,
 )]
 pub struct Cli {

@@ -38,7 +38,7 @@ pub struct DispatchCtx<'a> {
 
 impl GenericBackend {
     pub fn dispatch(&self, dctx: DispatchCtx<'_>) -> Result<()> {
-        // files may be empty — that's the `edtr` no-args path. Most CLI
+        // files may be empty — that's the `todoke` no-args path. Most CLI
         // editors (code, vim, emacs, …) happily launch their UI without a
         // file argument, so we just skip the trailing files but still run
         // the command.

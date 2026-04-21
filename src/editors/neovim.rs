@@ -52,7 +52,7 @@ pub struct NeovimBackend {
 
 impl NeovimBackend {
     pub async fn dispatch(&self, files: &[PathBuf], mode: Mode, sync: bool) -> Result<()> {
-        // files may be empty — that's the `edtr` no-args path; backends
+        // files may be empty — that's the `todoke` no-args path; backends
         // interpret it as "open the editor without a file" (spawning an
         // empty buffer, or `:enew` into an existing remote instance).
         match (mode, sync) {
@@ -67,7 +67,7 @@ impl NeovimBackend {
     }
 
     /// Try to connect to the listen pipe; on success, send `:edit <file>` for
-    /// each file (or `:enew` if the user invoked edtr with no files). On
+    /// each file (or `:enew` if the user invoked todoke with no files). On
     /// connect failure, spawn a detached nvim with `--listen` so the next
     /// remote dispatch finds it.
     async fn dispatch_remote(&self, files: &[PathBuf]) -> Result<()> {
@@ -145,7 +145,7 @@ impl NeovimBackend {
             cmd.arg(f);
         }
         // inherit stdio so nvim can draw to the parent terminal (this is the
-        // $EDITOR=edtr use case: git invokes edtr with a TTY attached, and
+        // $EDITOR=todoke use case: git invokes todoke with a TTY attached, and
         // nvim must take over that TTY).
         cmd.stdin(Stdio::inherit())
             .stdout(Stdio::inherit())

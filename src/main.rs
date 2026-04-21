@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
         Some(Command::Doctor) => dispatcher::doctor(&cli).await,
         Some(Command::Config(sub)) => cli::config::run(sub).await,
         Some(Command::Completion { shell }) => {
-            clap_complete::generate(shell, &mut Cli::command(), "edtr", &mut std::io::stdout());
+            clap_complete::generate(shell, &mut Cli::command(), "todoke", &mut std::io::stdout());
             Ok(())
         }
     }

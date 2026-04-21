@@ -1,82 +1,84 @@
-# <img src="assets/icon.png" width="32" align="left" alt="" /> edtr
+# <img src="assets/icon.png" width="32" align="left" alt="" /> todoke
 
 <p align="center">
-  <img src="assets/logo.svg" width="520" alt="edtr — editor router" />
+  <img src="assets/logo.svg" width="560" alt="todoke — rule-driven file dispatcher" />
 </p>
 
 <p align="center">
-  <b>An editor router/transfer tool that dispatches files to the right editor based on rules.</b>
+  <b>A rule-driven file dispatcher that hands incoming paths to the right editor or script — <i>届け</i>.</b>
 </p>
 
 <p align="center">
-  <a href="https://crates.io/crates/edtr"><img src="https://img.shields.io/crates/v/edtr.svg" alt="crates.io"/></a>
-  <a href="https://github.com/yukimemi/edtr/actions"><img src="https://github.com/yukimemi/edtr/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+  <a href="https://crates.io/crates/todoke"><img src="https://img.shields.io/crates/v/todoke.svg" alt="crates.io"/></a>
+  <a href="https://github.com/yukimemi/todoke/actions"><img src="https://github.com/yukimemi/todoke/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"/></a>
 </p>
 
 ```
-┌──────┐       ┌──────┐       ╭──▶ nvim
-│ file │ ──▶   │ edtr │ ──▶   ├──▶ code
-└──────┘       └──────┘       ╰──▶ …
+┌──────┐       ┌────────┐       ╭──▶ nvim
+│ file │ ──▶   │ todoke │ ──▶   ├──▶ code
+└──────┘       └────────┘       ╰──▶ script / …
 ```
 
-`edtr` is a fast, cross-platform CLI that takes one or more file paths and
-forwards them to the right editor according to rules you write in TOML. It is
-the Rust successor to [`hitori.vim`](https://github.com/yukimemi/hitori.vim):
-same "single editor instance" idea, but editor-agnostic and with near-zero
-startup cost — perfect for registering as your OS default program for text
-files, or as `$EDITOR`.
+`todoke` takes one or more file paths and decides what to do with each of
+them — by regex-matching the path against a TOML ruleset. A rule can target
+a long-running neovim (reused via msgpack-RPC), any generic CLI editor, or a
+raw shell script. Perfect as your OS default program for text files, as
+`$EDITOR`, or as a standalone file handler.
+
+It is the successor to [`edtr`][edtr] / [`hitori.vim`][hitori], generalized
+from "editor router" into a full rule-driven dispatcher.
 
 ## Features
 
-- **Rule-based routing**: regex patterns in TOML decide which editor opens
-  which file. Different paths can route to different editors (VSCode for one
-  project, nvim for another).
-- **Single-instance neovim** via named pipes / unix sockets: `edtr` connects
-  to a running nvim and sends `:edit` over msgpack-RPC. Works on Windows via
-  `\\.\pipe\...` — no Deno, no plugin framework, no cold start.
-- **Sync or async** per rule: `sync = true` waits for the editor to exit
+- **Rule-based routing**: regex patterns in TOML decide what handles each
+  file. Different paths → different handlers (VSCode for one project, nvim
+  for another, a shell script for a third).
+- **Single-instance neovim** via named pipes / unix sockets: `todoke`
+  connects to a running nvim and sends `:edit` over msgpack-RPC. Works on
+  Windows via `\\.\pipe\...` — no Deno, no plugin framework, no cold start.
+- **Sync or async** per rule: `sync = true` blocks until the handler exits
   (perfect for `git commit`), `sync = false` fires and forgets (perfect for
   double-clicking files in the OS file explorer).
 - **Tera templating** throughout the config: `{{ file_path }}`,
-  `{{ env.HOME }}`, `{% if is_windows() %}...{% endif %}`, and every Tera
-  filter.
-- **Generic editor support**: any CLI editor works (`code`, `vim`, `helix`,
-  `subl`, `emacsclient`, …) without custom code.
+  `{{ env.HOME }}`, `{% if is_windows() %}…{% endif %}`, structural
+  conditionals that include whole editor / rule blocks, every Tera filter.
+- **Generic CLI support**: any command-line tool works (`code`, `vim`,
+  `helix`, `subl`, `emacsclient`, `bat`, `pandoc`, …) without custom code.
+- **`edtr` compatibility**: same embedded default config, same config
+  schema. Existing `edtr` users migrate by renaming the config directory
+  (see below).
 - **Fast**: static Rust binary, cold start in milliseconds. On Windows this
   is often 10–100× faster than denops-based alternatives.
 
 ## Install
 
 ```sh
-cargo install edtr
+cargo install todoke
 ```
 
-Binary lives at `~/.cargo/bin/edtr`. Make sure that's on your `PATH`.
+Binary lives at `~/.cargo/bin/todoke`. Make sure that's on your `PATH`.
 
 ## Quick start
 
-`edtr` works out of the box with a bundled default config — it routes
+`todoke` works out of the box with a bundled default config — it routes
 everything to a single shared neovim instance, except `$EDITOR`-callback
-files (`COMMIT_EDITMSG` etc.) which always get a fresh `sync = true` instance
-so `git commit` works.
+files (`COMMIT_EDITMSG` etc.) which always get a fresh `sync = true`
+instance so `git commit` works.
 
 To customize, drop a file at:
 
-- Linux / macOS: `~/.config/edtr/edtr.toml`
-- Windows: `%APPDATA%\edtr\edtr.toml`
+- Linux / macOS / Windows: `~/.config/todoke/todoke.toml`
 
 Minimal example:
 
 ```toml
-# ~/.config/edtr/edtr.toml
+# ~/.config/todoke/todoke.toml
 
 [editors.nvim]
 kind = "neovim"
 command = "nvim"
-# The pipe used to reach the running nvim. is_windows()/is_linux()/is_mac()
-# are edtr-provided Tera functions.
-listen = '{% if is_windows() %}\\.\pipe\nvim-edtr-{{ group }}{% else %}/tmp/nvim-edtr-{{ group }}.sock{% endif %}'
+listen = '{% if is_windows() %}\\.\pipe\nvim-todoke-{{ group }}{% else %}/tmp/nvim-todoke-{{ group }}.sock{% endif %}'
 
 [editors.code]
 kind = "generic"
@@ -111,31 +113,49 @@ mode = "remote"
 Then:
 
 ```sh
-# Open any file in the right editor
-edtr notes.md
+# Open any file in the right handler
+todoke notes.md
 
 # See which rule would match, without actually dispatching
-edtr check notes.md src/main.rs
+todoke check notes.md src/main.rs
 
-# Same dispatch logic, just don't execute
-edtr --dry-run notes.md
+# Same dispatch logic, don't execute
+todoke --dry-run notes.md
+
+# Lint the config for common footguns
+todoke doctor
 ```
 
 ### As `$EDITOR`
 
 ```sh
-export EDITOR=edtr
-git commit      # → edtr routes COMMIT_EDITMSG to nvim mode=new sync=true
+export EDITOR=todoke
+git commit      # → todoke routes COMMIT_EDITMSG to nvim mode=new sync=true
 ```
 
-The bundled default config is compatible with every `$EDITOR=...` caller I
+The bundled default config is compatible with every `$EDITOR=…` caller I
 know of (git, crontab, visudo, fc, mutt, …).
 
 ### As OS default program (Windows)
 
 Right-click a `.txt` → Open with → Choose another app → Browse → point at
-`edtr.exe`. `edtr` will honor the rules and open the file in the correct
-editor, spawning a new console if the target editor is a TUI.
+`todoke.exe`. `todoke` honors the rules and opens the file in the correct
+handler, spawning a new console if the target is a TUI.
+
+### Migrating from `edtr`
+
+```sh
+# Linux / macOS
+mv ~/.config/edtr ~/.config/todoke
+mv ~/.config/todoke/edtr.toml ~/.config/todoke/todoke.toml
+
+# Update env var if you set it
+export EDITOR=todoke
+
+# If the config mentions the pipe name, change `nvim-edtr-` → `nvim-todoke-`
+```
+
+`TODOKE_CONFIG` replaces `EDTR_CONFIG` as the env override.
 
 ## Configuration reference
 
@@ -151,14 +171,14 @@ proj_root = "/home/me/src"
 
 ### `[editors.<name>]`
 
-| field         | type           | required | meaning                                                |
-| ------------- | -------------- | -------- | ------------------------------------------------------ |
+| field         | type                     | required | meaning                                                |
+| ------------- | ------------------------ | -------- | ------------------------------------------------------ |
 | `kind`        | `"neovim"` / `"generic"` | yes      | backend selection                                      |
-| `command`     | string         | yes      | the editor binary (PATH-resolved)                      |
-| `listen`      | string         | neovim   | socket / named pipe path for RPC                       |
-| `args_new`    | array\<string> | no       | extra args when `mode = "new"`                         |
-| `args_remote` | array\<string> | no       | extra args when spawning for `mode = "remote"` fallback |
-| `env`         | table          | no       | env vars passed to the spawned editor                  |
+| `command`     | string                   | yes      | the handler binary (PATH-resolved)                     |
+| `listen`      | string                   | neovim   | socket / named pipe path for RPC                       |
+| `args_new`    | array\<string>           | no       | extra args when `mode = "new"`                         |
+| `args_remote` | array\<string>           | no       | extra args when spawning for `mode = "remote"` fallback |
+| `env`         | table                    | no       | env vars passed to the spawned handler                 |
 
 ### `[[rules]]`
 
@@ -166,15 +186,16 @@ proj_root = "/home/me/src"
 | --------- | ------------------------- | ------------ | -------------------------------------------- |
 | `name`    | string                    | `rule[N]`    | human-readable label (shown in `check`)      |
 | `match`   | regex string or `[regex]` | required     | path pattern(s); paths are normalized to `/` before matching |
-| `exclude` | regex string or `[regex]` | none         | when any `exclude` hits, the rule is skipped even if `match` hits — edtr falls through to the next rule |
+| `exclude` | regex string or `[regex]` | none         | when any `exclude` hits, the rule is skipped even if `match` hits — todoke falls through to the next rule |
 | `editor`  | string                    | required     | key from `[editors.*]`                       |
 | `group`   | string                    | `"default"`  | instance identity (one nvim per group)       |
 | `mode`    | `"remote"` / `"new"`      | `"remote"`   | `remote` = reuse existing, `new` = always fresh |
-| `sync`    | bool                      | `false`      | `true` = block until editor exits            |
+| `sync`    | bool                      | `false`      | `true` = block until handler exits           |
 
 ### Template context
 
-Available in `rule.group`, `editor.command`, `editor.listen`, `editor.args_*`:
+Available in `rule.group`, `rule.editor`, `editor.command`, `editor.listen`,
+`editor.args_*`:
 
 | variable        | example                         |
 | --------------- | ------------------------------- |
@@ -188,34 +209,36 @@ Available in `rule.group`, `editor.command`, `editor.listen`, `editor.args_*`:
 | `group`         | resolved group (phase 3 only)   |
 | `rule`          | resolved rule name (phase 3)    |
 | `vars.<key>`    | your `[vars]` entries           |
-| `env.<KEY>`     | process env at edtr invocation  |
+| `env.<KEY>`     | process env at todoke invocation |
 
-And these edtr-specific Tera functions:
+And these todoke-specific Tera functions:
 
 - `is_windows()`, `is_linux()`, `is_mac()` — booleans for OS branching.
 
 Plus everything Tera ships — `replace`, `split`, `join`, `length`, `now()`,
-and all other stock [Tera features][tera].
+structural `{% if %}` / `{% elif %}` / `{% else %}` blocks around editor
+and rule sections, and all other stock [Tera features][tera].
 
 ## CLI reference
 
 ```
-edtr [FILES]...            # dispatch files per rules (default action)
-edtr check <FILES>...      # dry-run: show matched rule per file
-edtr completion <shell>    # emit shell completion script
-edtr --help
-edtr --version
+todoke [FILES]...            # dispatch files per rules (default action)
+todoke check <FILES>...      # dry-run: show matched rule per file
+todoke doctor                # lint the config for common footguns
+todoke completion <shell>    # emit shell completion script
+todoke --help
+todoke --version
 
 # v0.2+:
-edtr list                  # list alive editor instances
-edtr kill <group> | --all  # terminate instances
-edtr config path | edit | validate | show
+todoke list                    # list alive handler instances
+todoke kill <group> | --all    # terminate instances
+todoke config path | edit | validate | show
 ```
 
 Flags:
 
 - `-c, --config <PATH>` — override config path
-- `-E, --editor <NAME>` — bypass rule, force editor
+- `-E, --editor <NAME>` — bypass rule, force handler
 - `-G, --group <NAME>`  — bypass rule, force group
 - `--dry-run`           — print the resolved plan without executing
 - `-v, --verbose`       — `-v` = info, `-vv` = debug, `-vvv` = trace
@@ -225,17 +248,24 @@ Logging is also controllable via `RUST_LOG`.
 ## Roadmap
 
 - **v0.1** *(this release)*: core dispatch, neovim + generic backends,
-  `check`, `completion`, default config, `$EDITOR` compatibility.
+  `check`, `doctor`, `completion`, default config, `$EDITOR`
+  compatibility, colored output.
 - **v0.2**: `list` / `kill` / `config edit|validate|show`, `open` / `send`,
   neovim `remote + sync` via `nvim_buf_attach`.
-- **v0.3+**: `script` editor kind, per-file arg placement, plugin hooks.
+- **v0.3**: `script` editor kind — run arbitrary shell commands as a
+  handler, turning todoke into a general "open with rules" tool for any
+  file type (previewer, formatter, pipeline, …).
 
 ## Heritage
 
-`edtr` is a Rust rewrite of [`hitori.vim`][hitori] (denops-based). The old
-plugin had a slow cold start on Windows and was vim/neovim-only; `edtr` is
-fast and editor-agnostic while preserving the core "one editor instance"
-philosophy.
+`todoke` extends [`edtr`][edtr], which was itself a Rust rewrite of
+[`hitori.vim`][hitori]. The lineage:
+
+- `hitori.vim` (denops): single-instance vim plugin, vim/neovim-only, slow
+  on Windows.
+- `edtr`: Rust rewrite, editor-agnostic, fast on all platforms.
+- `todoke`: `edtr` plus broader scope — any command-line handler (not just
+  editors), any file type. The name 「届け」 means *deliver* in Japanese.
 
 ## License
 
@@ -243,3 +273,4 @@ philosophy.
 
 [tera]: https://keats.github.io/tera/docs/#built-ins
 [hitori]: https://github.com/yukimemi/hitori.vim
+[edtr]: https://crates.io/crates/edtr

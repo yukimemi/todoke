@@ -338,28 +338,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "edtr"
-version = "0.1.9"
-dependencies = [
- "anyhow",
- "clap",
- "clap_complete",
- "directories",
- "nvim-rs",
- "owo-colors",
- "regex",
- "serde",
- "supports-color",
- "tera",
- "thiserror 2.0.18",
- "tokio",
- "toml 0.8.23",
- "tracing",
- "tracing-subscriber",
- "winresource",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1256,6 +1234,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "todoke"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "clap_complete",
+ "directories",
+ "nvim-rs",
+ "owo-colors",
+ "regex",
+ "serde",
+ "supports-color",
+ "tera",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "winresource",
 ]
 
 [[package]]
