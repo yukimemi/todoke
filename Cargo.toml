@@ -43,7 +43,7 @@ tera = "1.20.1"
 url = "2.5.8"
 thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = ["full"] }
-toml = "0.8"
+toml = "0.9.12"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
