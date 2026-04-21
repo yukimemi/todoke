@@ -1,41 +1,49 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <defs>
-    <!-- Deep slate background, no primary blue -->
+    <!-- Warm sakura-pink gradient (君に届け inspired) -->
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#1e293b"/>   <!-- slate-800 -->
-      <stop offset="100%" stop-color="#0b1220"/> <!-- darker than slate-900 -->
+      <stop offset="0%" stop-color="#ffe4ec"/>
+      <stop offset="60%" stop-color="#ffb9cd"/>
+      <stop offset="100%" stop-color="#ff8aa8"/>
     </linearGradient>
-    <!-- Subtle inner highlight -->
-    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#475569" stop-opacity="0.45"/>
-      <stop offset="100%" stop-color="#475569" stop-opacity="0"/>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.6">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="petal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#fff0f5"/>
     </linearGradient>
-    <marker id="head" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="5" markerHeight="5" orient="auto">
-      <path d="M 0 0 L 12 6 L 0 12 z" fill="#06b6d4"/>
-    </marker>
   </defs>
 
-  <!-- Rounded square plate -->
-  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#bg)"/>
-  <!-- Hairline rim for depth -->
-  <rect x="16.5" y="16.5" width="223" height="223" rx="44" fill="url(#rim)" stroke="#334155" stroke-width="1"/>
+  <!-- Rounded plate -->
+  <rect x="0" y="0" width="256" height="256" rx="44" fill="url(#bg)"/>
+  <!-- Soft highlight in the middle -->
+  <circle cx="128" cy="128" r="90" fill="url(#glow)"/>
 
-  <!-- I-beam (text cursor) on the left: the universal "editor" mark.
-       Bar height ≈ 70% of the plate, hefty serifs. -->
-  <g fill="none" stroke="#f1f5f9" stroke-width="16" stroke-linecap="round">
-    <!-- top serif -->
-    <line x1="58" y1="68" x2="118" y2="68"/>
-    <!-- vertical bar -->
-    <line x1="88" y1="68" x2="88" y2="188"/>
-    <!-- bottom serif -->
-    <line x1="58" y1="188" x2="118" y2="188"/>
+  <!-- 5-petal sakura. Petal path: rounded with a tip notch — the classic 桜 silhouette. -->
+  <g transform="translate(128 128)">
+    <g fill="url(#petal)" stroke="#e85c85" stroke-width="3" stroke-linejoin="round">
+      <path id="p" d="M 0 0 C -22 -22 -38 -52 -14 -72 L -4 -62 L 0 -72 L 4 -62 L 14 -72 C 38 -52 22 -22 0 0 Z"/>
+      <use href="#p" transform="rotate(72)"/>
+      <use href="#p" transform="rotate(144)"/>
+      <use href="#p" transform="rotate(216)"/>
+      <use href="#p" transform="rotate(288)"/>
+    </g>
+    <!-- Yellow stamen center -->
+    <circle r="11" fill="#ffd23f" stroke="#e85c85" stroke-width="2"/>
+    <g fill="#e85c85">
+      <circle cx="0" cy="-5" r="1.6"/>
+      <circle cx="5" cy="2" r="1.6"/>
+      <circle cx="-5" cy="2" r="1.6"/>
+      <circle cx="3" cy="-3" r="1.2"/>
+      <circle cx="-3" cy="-3" r="1.2"/>
+    </g>
   </g>
 
-  <!-- Three routing arrows fanning from the I-beam toward the right.
-       Cyan accent reads as "data flowing out" without being primary blue. -->
-  <g fill="none" stroke="#06b6d4" stroke-width="13" stroke-linecap="round">
-    <path d="M 132 90  C 168 84,  186 78,  198 66"  marker-end="url(#head)"/>
-    <path d="M 132 128 L 200 128"                    marker-end="url(#head)"/>
-    <path d="M 132 166 C 168 172, 186 178, 198 190"  marker-end="url(#head)"/>
+  <!-- Small fallen petal in the corner, suggesting motion -->
+  <g transform="translate(210 210) rotate(35)">
+    <path d="M 0 0 C -6 -6 -10 -14 -4 -20 L -1 -17 L 0 -20 L 1 -17 L 4 -20 C 10 -14 6 -6 0 0 Z"
+          fill="#fff0f5" stroke="#e85c85" stroke-width="1.5" stroke-linejoin="round" opacity="0.9"/>
   </g>
 </svg>
