@@ -52,10 +52,9 @@ pub struct NeovimBackend {
 
 impl NeovimBackend {
     pub async fn dispatch(&self, files: &[PathBuf], mode: Mode, sync: bool) -> Result<()> {
-        if files.is_empty() {
-            return Ok(());
-        }
-
+        // files may be empty — that's the `edtr` no-args path; backends
+        // interpret it as "open the editor without a file" (spawning an
+        // empty buffer, or `:enew` into an existing remote instance).
         match (mode, sync) {
             (Mode::Remote, false) => self.dispatch_remote(files).await,
             (Mode::New, false) => self.spawn_detached_fresh(files),
@@ -68,18 +67,24 @@ impl NeovimBackend {
     }
 
     /// Try to connect to the listen pipe; on success, send `:edit <file>` for
-    /// each file. On connect failure, spawn a detached nvim with `--listen` so
-    /// the next remote dispatch finds it.
+    /// each file (or `:enew` if the user invoked edtr with no files). On
+    /// connect failure, spawn a detached nvim with `--listen` so the next
+    /// remote dispatch finds it.
     async fn dispatch_remote(&self, files: &[PathBuf]) -> Result<()> {
         match create::new_path(self.listen.as_str(), DummyHandler).await {
             Ok((nvim, _io_handle)) => {
                 info!(pipe = %self.listen, count = files.len(), "connected to existing nvim");
-                for f in files {
-                    let vim_cmd = format!("edit {}", vim_path(f));
-                    debug!(cmd = %vim_cmd, "sending RPC");
-                    nvim.command(&vim_cmd)
-                        .await
-                        .with_context(|| format!("failed to send :{vim_cmd}"))?;
+                if files.is_empty() {
+                    debug!(cmd = "enew", "sending RPC");
+                    nvim.command("enew").await.context("failed to send :enew")?;
+                } else {
+                    for f in files {
+                        let vim_cmd = format!("edit {}", vim_path(f));
+                        debug!(cmd = %vim_cmd, "sending RPC");
+                        nvim.command(&vim_cmd)
+                            .await
+                            .with_context(|| format!("failed to send :{vim_cmd}"))?;
+                    }
                 }
                 Ok(())
             }

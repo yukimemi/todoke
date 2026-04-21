@@ -25,12 +25,12 @@ use crate::matcher::{first_match, normalize_path, strip_verbatim};
 use crate::template::{FileParts, build_context, new_engine, render};
 
 pub async fn dispatch(cli: &Cli, files: &[PathBuf]) -> Result<()> {
-    if files.is_empty() {
-        bail!("no files given; try `edtr --help`");
-    }
-
     let cfg = config::load(cli.config.as_deref())?;
-    let plan = plan_batches(cli, &cfg, files)?;
+    let plan = if files.is_empty() {
+        plan_no_args(cli, &cfg)?
+    } else {
+        plan_batches(cli, &cfg, files)?
+    };
 
     debug!(batches = plan.len(), "dispatch plan built");
 
@@ -40,6 +40,66 @@ pub async fn dispatch(cli: &Cli, files: &[PathBuf]) -> Result<()> {
     }
 
     run_plan(&cfg, plan).await
+}
+
+/// Build a single-batch plan for the no-args case (`edtr` with nothing else).
+/// Matches rules against the empty string so a catch-all rule (e.g.
+/// `match = '.*'`) wins; the resulting batch carries no files and each
+/// backend is expected to interpret that as "open the editor empty".
+fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
+    let cwd = std::env::current_dir()
+        .context("could not read current directory")?
+        .to_string_lossy()
+        .into_owned();
+
+    let rule_idx = first_match(cfg, "").or_else(|| {
+        // If the user forced an editor/group and no rule matched empty path,
+        // fall back to the first rule to pick up mode/sync defaults.
+        if (cli.editor.is_some() || cli.group.is_some()) && !cfg.raw.rules.is_empty() {
+            Some(0)
+        } else {
+            None
+        }
+    });
+
+    let Some(rule_idx) = rule_idx else {
+        bail!(
+            "no rule matches empty-args invocation; add a catch-all rule (e.g. `match = '.*'`) or pass a file"
+        );
+    };
+
+    let rule = cfg.rule(rule_idx);
+    let rule_name = rule
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("rule[{rule_idx}]"));
+
+    let mut tera = new_engine();
+    let placeholder_file = FileParts::from_path(Path::new(""));
+    let ctx_phase2 = build_context(&placeholder_file, None, &cwd, "", &rule_name, &cfg.raw.vars);
+
+    let group = if let Some(g) = cli.group.clone() {
+        g
+    } else if let Some(tmpl) = &rule.group {
+        render(&mut tera, tmpl, &ctx_phase2).context("rendering rule.group template")?
+    } else {
+        config::DEFAULT_GROUP.to_string()
+    };
+
+    let editor_name = match cli.editor.clone() {
+        Some(e) => e,
+        None => render(&mut tera, &rule.editor, &ctx_phase2)
+            .context("rendering rule.editor template")?,
+    };
+
+    Ok(vec![Batch {
+        editor_name,
+        group,
+        mode: rule.mode,
+        sync: rule.sync,
+        rule_name,
+        files: Vec::new(),
+    }])
 }
 
 pub async fn check(cli: &Cli, files: &[PathBuf]) -> Result<()> {

@@ -38,9 +38,10 @@ pub struct DispatchCtx<'a> {
 
 impl GenericBackend {
     pub fn dispatch(&self, dctx: DispatchCtx<'_>) -> Result<()> {
-        if dctx.files.is_empty() {
-            return Ok(());
-        }
+        // files may be empty — that's the `edtr` no-args path. Most CLI
+        // editors (code, vim, emacs, …) happily launch their UI without a
+        // file argument, so we just skip the trailing files but still run
+        // the command.
 
         let args_template = match dctx.mode {
             Mode::Remote => &self.args_remote,
@@ -74,7 +75,13 @@ impl GenericBackend {
     }
 
     fn render_args(&self, templates: &[String], dctx: &DispatchCtx<'_>) -> Result<Vec<String>> {
-        let first = FileParts::from_path(dctx.files.first().unwrap());
+        // Render templates using the first file's context when available, or
+        // a blank placeholder file for the no-args invocation.
+        let first = dctx
+            .files
+            .first()
+            .map(|p| FileParts::from_path(p))
+            .unwrap_or_else(|| FileParts::from_path(Path::new("")));
         let editor_parts = FileParts::from_path(Path::new(&self.command));
         let ctx = build_context(
             &first,

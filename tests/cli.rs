@@ -60,10 +60,45 @@ fn version_succeeds() {
 }
 
 #[test]
-fn no_files_errors() {
-    let (ok, _stdout, stderr) = run_with(&[]);
+fn no_args_uses_default_rule() {
+    let dir = temp_dir();
+    let config = dir.join("edtr.toml");
+    write_file(
+        &config,
+        r#"
+            [editors.echo]
+            kind = "generic"
+            command = "echo"
+
+            [[rules]]
+            name = "default"
+            match = '.*'
+            editor = "echo"
+        "#,
+    );
+
+    let (ok, out, err) = run_with(&["--config", &config.to_string_lossy(), "--dry-run"]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.contains("editor=echo"), "stdout: {out}");
+    assert!(out.contains("rule=default"), "stdout: {out}");
+}
+
+#[test]
+fn no_args_no_rules_errors() {
+    let dir = temp_dir();
+    let config = dir.join("edtr.toml");
+    write_file(
+        &config,
+        r#"
+            [editors.echo]
+            kind = "generic"
+            command = "echo"
+        "#,
+    );
+
+    let (ok, _out, err) = run_with(&["--config", &config.to_string_lossy(), "--dry-run"]);
     assert!(!ok);
-    assert!(stderr.contains("no files given"), "stderr: {stderr}");
+    assert!(err.contains("no rule matches empty-args"), "stderr: {err}");
 }
 
 #[test]
