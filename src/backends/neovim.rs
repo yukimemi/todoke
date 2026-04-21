@@ -1,15 +1,17 @@
 //! Neovim backend.
 //!
-//! Dispatch matrix (for v0.1):
+//! Dispatch matrix:
 //!
 //! | mode    | sync  | behavior                                                     |
 //! |---------|-------|--------------------------------------------------------------|
 //! | remote  | false | connect to listen pipe; on fail, spawn detached with --listen |
 //! | new     | false | always spawn detached (no --listen)                           |
 //! | new     | true  | spawn as child, wait for exit, propagate exit code            |
-//! | remote  | true  | v0.1 falls back to `new + true` with a warning                |
+//! | remote  | true  | falls back to `new + true` with a warning (v0.2 TODO)         |
+//! | <other> | *     | treated as `remote` (RPC with `args.<mode>` list ignored)     |
 //!
-//! remote+sync via `nvim_buf_attach` is queued for v0.2.
+//! Input type: only file inputs are supported; URL inputs are rejected with
+//! a warn and skipped at the caller level.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
@@ -19,7 +21,6 @@ use nvim_rs::{Handler, compat::tokio::Compat, create::tokio as create};
 use tokio::io::WriteHalf;
 use tracing::{debug, info, warn};
 
-use crate::config::Mode;
 use crate::matcher::vim_path as vim_path_fn;
 use crate::platform;
 
@@ -37,31 +38,38 @@ impl Handler for DummyHandler {
     type Writer = NvimWriter;
 }
 
+/// A neovim dispatch. Uses well-known mode names `"remote"` and `"new"`;
+/// anything else is treated as `"remote"` with a warning. `args_remote` is
+/// injected between files and `--listen`; `args_new` goes before files when
+/// spawning fresh (no --listen).
 #[derive(Debug, Clone)]
 pub struct NeovimBackend {
     pub command: String,
     pub listen: String,
-    /// Extra args inserted before `--listen` when spawning for remote-mode
-    /// fallback. Needed for wrappers like `neovide` which only forward args to
-    /// nvim when they come after `--`. Default for direct `nvim`: empty.
     pub args_remote: Vec<String>,
-    /// Extra args inserted before the files when spawning in `new` mode (no
-    /// `--listen`). Useful for e.g. `neovide --no-fork` in sync scenarios.
     pub args_new: Vec<String>,
 }
 
 impl NeovimBackend {
-    pub async fn dispatch(&self, files: &[PathBuf], mode: Mode, sync: bool) -> Result<()> {
-        // files may be empty — that's the `todoke` no-args path; backends
-        // interpret it as "open the editor without a file" (spawning an
-        // empty buffer, or `:enew` into an existing remote instance).
+    pub async fn dispatch(&self, files: &[PathBuf], mode: &str, sync: bool) -> Result<()> {
         match (mode, sync) {
-            (Mode::Remote, false) => self.dispatch_remote(files).await,
-            (Mode::New, false) => self.spawn_detached_fresh(files),
-            (Mode::New, true) => self.spawn_sync(files),
-            (Mode::Remote, true) => {
-                warn!("neovim remote+sync is not implemented yet (v0.2); falling back to new+sync");
+            ("remote", false) => self.dispatch_remote(files).await,
+            ("new", false) => self.spawn_detached_fresh(files),
+            ("new", true) => self.spawn_sync(files),
+            ("remote", true) => {
+                warn!("neovim remote+sync is not implemented yet; falling back to new+sync");
                 self.spawn_sync(files)
+            }
+            (other, s) => {
+                warn!(
+                    mode = other,
+                    "unknown mode for neovim backend; treating as remote"
+                );
+                if s {
+                    self.spawn_sync(files)
+                } else {
+                    self.dispatch_remote(files).await
+                }
             }
         }
     }
@@ -96,13 +104,6 @@ impl NeovimBackend {
     }
 
     /// Argv layout: `command FILES... <args_remote>... --listen LISTEN`.
-    ///
-    /// Files come first so wrappers like `neovide` recognize them as
-    /// `FILES_TO_OPEN` (neovide's help: positional args before `--` are
-    /// forwarded to nvim as files). `args_remote` then carries the `--`
-    /// separator that lets `--listen` reach the embedded nvim. For plain
-    /// `nvim` (empty `args_remote`) this collapses to
-    /// `nvim FILE --listen PIPE`, which nvim accepts.
     fn spawn_detached_with_listen(&self, files: &[PathBuf]) -> Result<()> {
         let mut cmd = StdCommand::new(&self.command);
         for f in files {
@@ -145,8 +146,8 @@ impl NeovimBackend {
             cmd.arg(f);
         }
         // inherit stdio so nvim can draw to the parent terminal (this is the
-        // $EDITOR=todoke use case: git invokes todoke with a TTY attached, and
-        // nvim must take over that TTY).
+        // $EDITOR=todoke use case: git invokes todoke with a TTY attached,
+        // and nvim must take over that TTY).
         cmd.stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());

@@ -1,10 +1,11 @@
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 
+mod backends;
 mod cli;
 mod config;
 mod dispatcher;
-mod editors;
+mod input;
 mod matcher;
 mod platform;
 mod style;

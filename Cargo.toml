@@ -1,9 +1,9 @@
 [package]
 name = "todoke"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
-description = "A rule-driven file dispatcher: hands incoming file paths to the right editor or script based on TOML-defined rules."
+description = "A rule-driven file and URL dispatcher: hands incoming paths (or URLs) to the right handler based on TOML-defined rules."
 authors = ["yukimemi"]
 license = "MIT"
 readme = "README.md"
@@ -40,6 +40,7 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 supports-color = "3"
 tera = "1"
+url = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"

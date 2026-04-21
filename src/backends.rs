@@ -1,8 +1,8 @@
-//! Editor backends. `kind` in config selects one of these.
+//! Backends for the `kind` field on a `[todoke.<name>]` target.
 //!
 //! Each backend exposes its own `dispatch` method because their natural call
-//! shapes differ (neovim is async due to RPC, generic is sync). A unifying
+//! shapes differ (neovim is async due to RPC, exec is sync). A unifying
 //! trait was tried during scaffold but didn't carry its weight.
 
-pub mod generic;
+pub mod exec;
 pub mod neovim;

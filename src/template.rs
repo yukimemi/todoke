@@ -1,16 +1,17 @@
 //! Tera wrapper.
 //!
 //! - Registers todoke-specific functions: `is_windows`, `is_linux`, `is_mac`.
-//! - Builds a per-dispatch [`tera::Context`] populated with `file_*`,
-//!   `editor_*`, `cwd`, `group`, `rule`, `vars.*`, `env.*` as established in
-//!   the design phase.
+//! - Builds a per-dispatch [`tera::Context`] populated with `input`,
+//!   `input_type`, `file_*` (for file inputs), `url_*` (for URL inputs),
+//!   `command_*`, `cwd`, `group`, `rule`, `vars.*`, `env.*`.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 
 use anyhow::Result;
 use tera::{Function, Tera, Value};
 
+use crate::input::Input;
 use crate::platform;
 
 /// Build a fresh Tera engine with todoke's custom OS functions registered.
@@ -31,92 +32,147 @@ pub fn render(tera: &mut Tera, template: &str, ctx: &tera::Context) -> Result<St
     Ok(tera.render_str(template, ctx)?)
 }
 
-/// Per-file parts of the template context.
-#[derive(Debug, Clone)]
-pub struct FileParts {
-    pub path: PathBuf,
-    pub dir: String,
-    pub name: String,
-    pub stem: String,
-    pub ext: String,
+/// Inputs to [`build_context`]. Holds references so callers don't have to
+/// allocate.
+pub struct Context<'a> {
+    pub input: Option<&'a Input>,
+    pub command: &'a str,
+    pub cwd: &'a str,
+    pub group: &'a str,
+    pub rule_name: &'a str,
+    pub vars: &'a BTreeMap<String, toml::Value>,
 }
 
-impl FileParts {
-    pub fn from_path(p: &Path) -> Self {
-        let path = p.to_path_buf();
-        let dir = p.parent().map(path_string).unwrap_or_default();
-        let name = p
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let stem = p
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let ext = p
-            .extension()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        Self {
-            path,
-            dir,
-            name,
-            stem,
-            ext,
-        }
-    }
+fn strip_verbatim_str(s: &str) -> String {
+    s.strip_prefix(r"\\?\").unwrap_or(s).to_string()
 }
 
-fn path_string(p: &Path) -> String {
-    // strip Windows `\\?\` verbatim prefix; keep backslashes intact — callers
-    // who want forward slashes should apply a Tera filter explicitly.
-    let s = p.to_string_lossy();
-    s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+fn file_vars(p: &Path) -> [(String, String); 5] {
+    let full = strip_verbatim_str(&p.to_string_lossy());
+    let dir = p
+        .parent()
+        .map(|x| strip_verbatim_str(&x.to_string_lossy()))
+        .unwrap_or_default();
+    let name = p
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let stem = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = p
+        .extension()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    [
+        ("file_path".into(), full),
+        ("file_dir".into(), dir),
+        ("file_name".into(), name),
+        ("file_stem".into(), stem),
+        ("file_ext".into(), ext),
+    ]
 }
 
-/// Build a Tera context for a dispatch. `group` and `rule` may be empty
-/// strings when rendering phase-2 templates (rule.group itself); the caller
-/// supplies them for phase-3 (editor templates).
-pub fn build_context(
-    file: &FileParts,
-    editor_cmd_parts: Option<&FileParts>,
-    cwd: &str,
-    group: &str,
-    rule_name: &str,
-    vars: &std::collections::BTreeMap<String, toml::Value>,
-) -> tera::Context {
+fn url_vars(u: &url::Url) -> [(String, String); 6] {
+    [
+        ("url_scheme".into(), u.scheme().to_string()),
+        ("url_host".into(), u.host_str().unwrap_or("").to_string()),
+        (
+            "url_port".into(),
+            u.port().map(|p| p.to_string()).unwrap_or_default(),
+        ),
+        ("url_path".into(), u.path().to_string()),
+        ("url_query".into(), u.query().unwrap_or("").to_string()),
+        (
+            "url_fragment".into(),
+            u.fragment().unwrap_or("").to_string(),
+        ),
+    ]
+}
+
+fn command_vars(command: &str) -> [(String, String); 5] {
+    let p = Path::new(command);
+    let [(_, path), (_, dir), (_, name), (_, stem), (_, ext)] = file_vars(p);
+    [
+        ("command_path".into(), path),
+        ("command_dir".into(), dir),
+        ("command_name".into(), name),
+        ("command_stem".into(), stem),
+        ("command_ext".into(), ext),
+    ]
+}
+
+const EMPTY_FILE_KEYS: [&str; 5] = [
+    "file_path",
+    "file_dir",
+    "file_name",
+    "file_stem",
+    "file_ext",
+];
+const EMPTY_URL_KEYS: [&str; 6] = [
+    "url_scheme",
+    "url_host",
+    "url_port",
+    "url_path",
+    "url_query",
+    "url_fragment",
+];
+
+/// Build a Tera context for a dispatch. When the input is `None` (e.g. the
+/// no-args invocation), all input-derived variables are empty strings.
+pub fn build_context(c: Context<'_>) -> tera::Context {
     let mut ctx = tera::Context::new();
 
-    ctx.insert("file_path", &path_string(&file.path));
-    ctx.insert("file_dir", &file.dir);
-    ctx.insert("file_name", &file.name);
-    ctx.insert("file_stem", &file.stem);
-    ctx.insert("file_ext", &file.ext);
+    // Universal input vars
+    let (input_str, input_type) = match c.input {
+        Some(i) => (i.display_string(), i.kind_label()),
+        None => (String::new(), ""),
+    };
+    ctx.insert("input", &input_str);
+    ctx.insert("input_type", input_type);
 
-    if let Some(ed) = editor_cmd_parts {
-        ctx.insert("editor_path", &path_string(&ed.path));
-        ctx.insert("editor_dir", &ed.dir);
-        ctx.insert("editor_name", &ed.name);
-        ctx.insert("editor_stem", &ed.stem);
-        ctx.insert("editor_ext", &ed.ext);
-    } else {
-        // Placeholders so templates that reference these don't blow up during
-        // phase-2 (rule.group) rendering.
-        ctx.insert("editor_path", "");
-        ctx.insert("editor_dir", "");
-        ctx.insert("editor_name", "");
-        ctx.insert("editor_stem", "");
-        ctx.insert("editor_ext", "");
+    // Populate file_* and url_* based on input type; the unused half gets
+    // empty strings so `{{ file_path }}` never fails in strict Tera.
+    match c.input {
+        Some(Input::File(p)) => {
+            for (k, v) in file_vars(p) {
+                ctx.insert(&k, &v);
+            }
+            for k in EMPTY_URL_KEYS {
+                ctx.insert(k, "");
+            }
+        }
+        Some(Input::Url(u)) => {
+            for k in EMPTY_FILE_KEYS {
+                ctx.insert(k, "");
+            }
+            for (k, v) in url_vars(u) {
+                ctx.insert(&k, &v);
+            }
+        }
+        None => {
+            for k in EMPTY_FILE_KEYS {
+                ctx.insert(k, "");
+            }
+            for k in EMPTY_URL_KEYS {
+                ctx.insert(k, "");
+            }
+        }
     }
 
-    ctx.insert("cwd", cwd);
-    ctx.insert("group", group);
-    ctx.insert("rule", rule_name);
+    for (k, v) in command_vars(c.command) {
+        ctx.insert(&k, &v);
+    }
+
+    ctx.insert("cwd", c.cwd);
+    ctx.insert("group", c.group);
+    ctx.insert("rule", c.rule_name);
 
     let env_map: HashMap<String, String> = std::env::vars().collect();
     ctx.insert("env", &env_map);
 
-    let vars_map: HashMap<String, toml::Value> = vars.clone().into_iter().collect();
+    let vars_map: HashMap<String, toml::Value> = c.vars.clone().into_iter().collect();
     ctx.insert("vars", &vars_map);
 
     ctx
@@ -125,33 +181,55 @@ pub fn build_context(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    #[test]
-    fn file_parts_rust_path_semantics() {
-        let p = PathBuf::from("/tmp/foo.rs");
-        let fp = FileParts::from_path(&p);
-        assert_eq!(fp.name, "foo.rs");
-        assert_eq!(fp.stem, "foo");
-        assert_eq!(fp.ext, "rs"); // no leading dot
+    fn build(input: Option<&Input>, vars: &BTreeMap<String, toml::Value>) -> tera::Context {
+        build_context(Context {
+            input,
+            command: "",
+            cwd: "/cwd",
+            group: "",
+            rule_name: "",
+            vars,
+        })
     }
 
     #[test]
-    fn file_parts_handles_double_extension() {
-        let p = PathBuf::from("/tmp/foo.tar.gz");
-        let fp = FileParts::from_path(&p);
-        assert_eq!(fp.stem, "foo.tar"); // Rust's Path::file_stem strips last ext
-        assert_eq!(fp.ext, "gz");
+    fn file_input_populates_file_vars() {
+        let i = Input::File(PathBuf::from("/tmp/hello.rs"));
+        let ctx = build(Some(&i), &BTreeMap::new());
+        let mut tera = new_engine();
+        let out = render(
+            &mut tera,
+            "{{ file_stem }}.{{ file_ext }} / {{ input_type }}",
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(out, "hello.rs / file");
     }
 
     #[test]
-    fn file_parts_handles_no_extension() {
-        let p = PathBuf::from("/tmp/Makefile");
-        let fp = FileParts::from_path(&p);
-        assert_eq!(fp.name, "Makefile");
-        assert_eq!(fp.stem, "Makefile");
-        assert_eq!(fp.ext, ""); // empty, not "Makefile"
+    fn url_input_populates_url_vars() {
+        let i =
+            Input::Url(url::Url::parse("https://github.com/yukimemi/todoke?tab=rs#top").unwrap());
+        let ctx = build(Some(&i), &BTreeMap::new());
+        let mut tera = new_engine();
+        let out = render(
+            &mut tera,
+            "{{ url_scheme }}://{{ url_host }}{{ url_path }}?{{ url_query }}#{{ url_fragment }} / {{ input_type }}",
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(out, "https://github.com/yukimemi/todoke?tab=rs#top / url");
+    }
+
+    #[test]
+    fn file_keys_empty_for_url_inputs() {
+        let i = Input::Url(url::Url::parse("https://example.com").unwrap());
+        let ctx = build(Some(&i), &BTreeMap::new());
+        let mut tera = new_engine();
+        let out = render(&mut tera, "[{{ file_path }}]", &ctx).unwrap();
+        assert_eq!(out, "[]");
     }
 
     #[test]
@@ -169,28 +247,18 @@ mod tests {
     }
 
     #[test]
-    fn renders_file_path_and_vars() {
-        let file = FileParts::from_path(Path::new("/tmp/hello.md"));
+    fn vars_and_env_substitute() {
+        unsafe { std::env::set_var("TODOKE_TEST_VAR", "test_value") };
         let mut vars = BTreeMap::new();
         vars.insert("greeting".into(), toml::Value::String("hi".into()));
-        let ctx = build_context(&file, None, "/cwd", "default", "default", &vars);
+        let ctx = build(None, &vars);
         let mut tera = new_engine();
         let out = render(
             &mut tera,
-            "{{ file_stem }}/{{ file_ext }} -> {{ vars.greeting }}",
+            "{{ vars.greeting }} {{ env.TODOKE_TEST_VAR }}",
             &ctx,
         )
         .unwrap();
-        assert_eq!(out, "hello/md -> hi");
-    }
-
-    #[test]
-    fn renders_env_var() {
-        unsafe { std::env::set_var("TODOKE_TEST_VAR", "test_value") };
-        let file = FileParts::from_path(Path::new("/tmp/x"));
-        let ctx = build_context(&file, None, "/cwd", "g", "r", &BTreeMap::new());
-        let mut tera = new_engine();
-        let out = render(&mut tera, "{{ env.TODOKE_TEST_VAR }}", &ctx).unwrap();
-        assert_eq!(out, "test_value");
+        assert_eq!(out, "hi test_value");
     }
 }

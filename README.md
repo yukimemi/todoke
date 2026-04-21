@@ -75,37 +75,47 @@ Minimal example:
 ```toml
 # ~/.config/todoke/todoke.toml
 
-[editors.nvim]
+# kind = "neovim" opts into msgpack-RPC reuse; "exec" (default) just spawns.
+[todoke.nvim]
 kind = "neovim"
 command = "nvim"
 listen = '{% if is_windows() %}\\.\pipe\nvim-todoke-{{ group }}{% else %}/tmp/nvim-todoke-{{ group }}.sock{% endif %}'
 
-[editors.code]
-kind = "generic"
+[todoke.code]
 command = "code"
-args_remote = ["--reuse-window"]
-args_new = ["--new-window"]
+[todoke.code.args]
+remote = ["--reuse-window"]
+new    = ["--new-window"]
+
+[todoke.firefox]
+command = "firefox"
 
 # git commit, rebase, etc. — always a blocking fresh nvim.
 [[rules]]
 name = "editor-callback"
 match = '(?i)/(COMMIT_EDITMSG|MERGE_MSG|git-rebase-todo)$'
-editor = "nvim"
+to = "nvim"
 mode = "new"
 sync = true
+
+# GitHub URLs → firefox
+[[rules]]
+name = "gh"
+match = '^https?://(www\.)?github\.com/'
+to = "firefox"
 
 # Route files under ~/src/company/ to VSCode.
 [[rules]]
 name = "work"
 match = '/src/company/'
-editor = "code"
+to = "code"
 mode = "remote"
 
 # Default: everything else goes to the shared nvim.
 [[rules]]
 name = "default"
 match = '.*'
-editor = "nvim"
+to = "nvim"
 group = "default"
 mode = "remote"
 ```
@@ -116,8 +126,12 @@ Then:
 # Open any file in the right handler
 todoke notes.md
 
+# URLs work too — same rule engine routes them to a browser, a browser
+# profile, or any CLI that accepts URLs.
+todoke https://github.com/yukimemi/todoke
+
 # See which rule would match, without actually dispatching
-todoke check notes.md src/main.rs
+todoke check notes.md https://example.com
 
 # Same dispatch logic, don't execute
 todoke --dry-run notes.md
@@ -142,17 +156,27 @@ Right-click a `.txt` → Open with → Choose another app → Browse → point a
 `todoke.exe`. `todoke` honors the rules and opens the file in the correct
 handler, spawning a new console if the target is a TUI.
 
-### Migrating from `edtr`
+### Migrating from `edtr` (or todoke 0.1.x)
+
+The schema changed in 0.2.0:
+
+```
+v0.1.x                               → v0.2.0
+------------------------------------   --------------------------------
+[editors.<name>]                       [todoke.<name>]
+kind = "generic"                       (optional, defaults to "exec")
+args_new = [...]                       [todoke.<name>.args] new = [...]
+args_remote = [...]                    [todoke.<name>.args] remote = [...]
+rule.editor = "..."                    rule.to = "..."
+```
 
 ```sh
-# Linux / macOS
+# Linux / macOS config dir (if still using the edtr name)
 mv ~/.config/edtr ~/.config/todoke
 mv ~/.config/todoke/edtr.toml ~/.config/todoke/todoke.toml
 
 # Update env var if you set it
 export EDITOR=todoke
-
-# If the config mentions the pipe name, change `nvim-edtr-` → `nvim-todoke-`
 ```
 
 `TODOKE_CONFIG` replaces `EDTR_CONFIG` as the env override.
@@ -169,47 +193,56 @@ template:
 proj_root = "/home/me/src"
 ```
 
-### `[editors.<name>]`
+### `[todoke.<name>]`
 
-| field         | type                     | required | meaning                                                |
-| ------------- | ------------------------ | -------- | ------------------------------------------------------ |
-| `kind`        | `"neovim"` / `"generic"` | yes      | backend selection                                      |
-| `command`     | string                   | yes      | the handler binary (PATH-resolved)                     |
-| `listen`      | string                   | neovim   | socket / named pipe path for RPC                       |
-| `args_new`    | array\<string>           | no       | extra args when `mode = "new"`                         |
-| `args_remote` | array\<string>           | no       | extra args when spawning for `mode = "remote"` fallback |
-| `env`         | table                    | no       | env vars passed to the spawned handler                 |
+A delivery target (the value behind a rule's `to = "<name>"`).
+
+| field      | type                                | required | meaning                                                         |
+| ---------- | ----------------------------------- | -------- | --------------------------------------------------------------- |
+| `kind`     | `"exec"` / `"neovim"`               | no (default `"exec"`) | `"exec"` spawns the command; `"neovim"` reuses a running nvim via msgpack-RPC |
+| `command`  | string                              | yes      | the handler binary (PATH-resolved)                              |
+| `listen`   | string                              | neovim   | socket / named pipe path for RPC                                |
+| `args`     | table of `<mode>` → `array<string>` | no       | args injected based on `rule.mode`; `args.default` is the fallback when no key matches |
+| `env`      | table                               | no       | env vars passed to the spawned handler                          |
 
 ### `[[rules]]`
 
 | field     | type                      | default      | meaning                                      |
 | --------- | ------------------------- | ------------ | -------------------------------------------- |
 | `name`    | string                    | `rule[N]`    | human-readable label (shown in `check`)      |
-| `match`   | regex string or `[regex]` | required     | path pattern(s); paths are normalized to `/` before matching |
+| `match`   | regex string or `[regex]` | required     | pattern(s) against the input; files are normalized to `/` before matching, URLs are matched as-is |
 | `exclude` | regex string or `[regex]` | none         | when any `exclude` hits, the rule is skipped even if `match` hits — todoke falls through to the next rule |
-| `editor`  | string                    | required     | key from `[editors.*]`                       |
+| `to`      | string (Tera-templated)   | required     | key into `[todoke.*]`                        |
 | `group`   | string                    | `"default"`  | instance identity (one nvim per group)       |
-| `mode`    | `"remote"` / `"new"`      | `"remote"`   | `remote` = reuse existing, `new` = always fresh |
+| `mode`    | string                    | `"remote"`   | free-form; `"remote"` / `"new"` are reserved for neovim behavior, otherwise used only to pick `args.<mode>` |
 | `sync`    | bool                      | `false`      | `true` = block until handler exits           |
 
 ### Template context
 
-Available in `rule.group`, `rule.editor`, `editor.command`, `editor.listen`,
-`editor.args_*`:
+Available in `rule.group`, `rule.to`, `todoke.*.command`, `todoke.*.listen`,
+`todoke.*.args.*`:
 
-| variable        | example                         |
-| --------------- | ------------------------------- |
-| `file_path`     | `C:/Users/you/notes/todo.md`    |
-| `file_dir`      | `C:/Users/you/notes`            |
-| `file_name`     | `todo.md`                       |
-| `file_stem`     | `todo`                          |
-| `file_ext`      | `md` (no leading dot)           |
-| `editor_*`      | same five fields for `command`  |
-| `cwd`           | current working directory       |
-| `group`         | resolved group (phase 3 only)   |
-| `rule`          | resolved rule name (phase 3)    |
-| `vars.<key>`    | your `[vars]` entries           |
-| `env.<KEY>`     | process env at todoke invocation |
+| variable        | example                             | populated for |
+| --------------- | ----------------------------------- | ------------- |
+| `input`         | `/tmp/foo.md` or `https://…`        | always        |
+| `input_type`    | `"file"` or `"url"`                 | always        |
+| `file_path`     | `C:/Users/you/notes/todo.md`        | file inputs   |
+| `file_dir`      | `C:/Users/you/notes`                | file inputs   |
+| `file_name`     | `todo.md`                           | file inputs   |
+| `file_stem`     | `todo`                              | file inputs   |
+| `file_ext`      | `md` (no leading dot)               | file inputs   |
+| `url_scheme`    | `https`                             | URL inputs    |
+| `url_host`      | `github.com`                        | URL inputs    |
+| `url_port`      | `443` or empty                      | URL inputs    |
+| `url_path`      | `/yukimemi/todoke`                  | URL inputs    |
+| `url_query`     | `tab=rs` or empty                   | URL inputs    |
+| `url_fragment`  | `top` or empty                      | URL inputs    |
+| `command_*`     | same five fields for the target command | always    |
+| `cwd`           | current working directory           | always        |
+| `group`         | resolved group                      | phase 3       |
+| `rule`          | resolved rule name                  | phase 3       |
+| `vars.<key>`    | your `[vars]` entries               | always        |
+| `env.<KEY>`     | process env at todoke invocation    | always        |
 
 And these todoke-specific Tera functions:
 

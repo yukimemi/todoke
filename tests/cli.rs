@@ -66,20 +66,19 @@ fn no_args_uses_default_rule() {
     write_file(
         &config,
         r#"
-            [editors.echo]
-            kind = "generic"
+            [todoke.echo]
             command = "echo"
 
             [[rules]]
             name = "default"
             match = '.*'
-            editor = "echo"
+            to = "echo"
         "#,
     );
 
     let (ok, out, err) = run_with(&["--config", &config.to_string_lossy(), "--dry-run"]);
     assert!(ok, "stderr: {err}");
-    assert!(out.contains("editor=echo"), "stdout: {out}");
+    assert!(out.contains("to=echo"), "stdout: {out}");
     assert!(out.contains("rule=default"), "stdout: {out}");
 }
 
@@ -90,8 +89,7 @@ fn no_args_no_rules_errors() {
     write_file(
         &config,
         r#"
-            [editors.echo]
-            kind = "generic"
+            [todoke.echo]
             command = "echo"
         "#,
     );
@@ -121,14 +119,13 @@ fn dry_run_plans_default_rule() {
     write_file(
         &config,
         r#"
-            [editors.echo]
-            kind = "generic"
+            [todoke.echo]
             command = "echo"
 
             [[rules]]
             name = "default"
             match = '.*'
-            editor = "echo"
+            to = "echo"
             group = "default"
             mode = "remote"
             sync = false
@@ -142,7 +139,7 @@ fn dry_run_plans_default_rule() {
         &file.to_string_lossy(),
     ]);
     assert!(ok, "stderr: {err}");
-    assert!(out.contains("editor=echo"), "stdout: {out}");
+    assert!(out.contains("to=echo"), "stdout: {out}");
     assert!(out.contains("group=default"), "stdout: {out}");
     assert!(out.contains("rule=default"), "stdout: {out}");
 }
@@ -159,20 +156,19 @@ fn check_shows_matched_rule_per_file() {
     write_file(
         &config,
         r#"
-            [editors.echo]
-            kind = "generic"
+            [todoke.echo]
             command = "echo"
 
             [[rules]]
             name = "rust"
             match = '\.rs$'
-            editor = "echo"
+            to = "echo"
             group = "code"
 
             [[rules]]
             name = "fallback"
             match = '.*'
-            editor = "echo"
+            to = "echo"
         "#,
     );
 
@@ -219,7 +215,7 @@ fn invalid_config_reports_error() {
 }
 
 #[test]
-fn unknown_editor_reference_reports_error() {
+fn unknown_to_reference_reports_error() {
     let dir = temp_dir();
     let file = dir.join("x.txt");
     write_file(&file, "x");
@@ -229,7 +225,7 @@ fn unknown_editor_reference_reports_error() {
         r#"
             [[rules]]
             match = ".*"
-            editor = "does-not-exist"
+            to = "does-not-exist"
         "#,
     );
 
@@ -240,5 +236,5 @@ fn unknown_editor_reference_reports_error() {
         &file.to_string_lossy(),
     ]);
     assert!(!ok);
-    assert!(err.contains("unknown editor"), "stderr: {err}");
+    assert!(err.contains("unknown todoke target"), "stderr: {err}");
 }

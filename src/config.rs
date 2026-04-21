@@ -6,7 +6,7 @@
 //!   cross-references. Everything you actually want to use at dispatch time.
 //!
 //! Tera expansion happens at dispatch time (not load time) because rule.group
-//! and editor.* templates can reference per-file context.
+//! and todoke.* templates can reference per-input context.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -22,31 +22,52 @@ pub const DEFAULT_CONFIG_TOML: &str = include_str!("../assets/default.toml");
 pub struct Config {
     #[serde(default)]
     pub vars: BTreeMap<String, toml::Value>,
+    /// Named targets for delivery. Keyed by handler name, referenced from
+    /// `rule.to`.
     #[serde(default)]
-    pub editors: BTreeMap<String, EditorDef>,
+    pub todoke: BTreeMap<String, Target>,
     #[serde(default)]
     pub rules: Vec<Rule>,
 }
 
+/// A named delivery target. Describes what happens when a rule picks this
+/// entry: a command to spawn, optional per-mode arg lists, and optional
+/// neovim-specific fields when `kind = "neovim"`.
 #[derive(Debug, Clone, Deserialize)]
-pub struct EditorDef {
-    pub kind: EditorKind,
+pub struct Target {
+    /// `"exec"` (default) spawns `command` with the resolved args.
+    /// `"neovim"` enables msgpack-RPC reuse of a running nvim on `listen`.
+    #[serde(default)]
+    pub kind: TargetKind,
     pub command: String,
     #[serde(default)]
     pub listen: Option<String>,
+    /// Per-mode arg lists. `args.default` (if present) is the fallback when
+    /// the rule's `mode` has no matching key in this map.
     #[serde(default)]
-    pub args_new: Vec<String>,
-    #[serde(default)]
-    pub args_remote: Vec<String>,
+    pub args: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+impl Target {
+    /// Look up the arg list for a given mode, falling back to `args.default`
+    /// and then to an empty list.
+    pub fn args_for(&self, mode: &str) -> &[String] {
+        self.args
+            .get(mode)
+            .or_else(|| self.args.get("default"))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum EditorKind {
+pub enum TargetKind {
+    #[default]
+    Exec,
     Neovim,
-    Generic,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -55,16 +76,22 @@ pub struct Rule {
     pub name: Option<String>,
     #[serde(rename = "match")]
     pub match_: StringOrVec,
-    /// Negative filter. When any `exclude` pattern hits the path, this rule
+    /// Negative filter. When any `exclude` pattern hits the input, this rule
     /// does NOT apply even if `match` hits — todoke keeps looking at
     /// subsequent rules. Accepts a single pattern or an array.
     #[serde(default)]
     pub exclude: Option<StringOrVec>,
-    pub editor: String,
+    /// Name of a `[todoke.<name>]` entry to deliver the matched input to.
+    /// Tera-templated — `to = "{{ vars.gui }}"` works.
+    pub to: String,
     #[serde(default)]
     pub group: Option<String>,
-    #[serde(default)]
-    pub mode: Mode,
+    /// Free-form mode string. For `kind = "neovim"` the reserved values
+    /// `"remote"` and `"new"` select RPC reuse vs fresh spawn. For
+    /// `kind = "exec"` the value is used purely to pick the matching
+    /// `target.args.<mode>` list.
+    #[serde(default = "default_mode")]
+    pub mode: String,
     #[serde(default)]
     pub sync: bool,
 }
@@ -85,15 +112,12 @@ impl StringOrVec {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub enum Mode {
-    #[default]
-    Remote,
-    New,
-}
-
 pub const DEFAULT_GROUP: &str = "default";
+pub const DEFAULT_MODE: &str = "remote";
+
+fn default_mode() -> String {
+    DEFAULT_MODE.to_string()
+}
 
 fn is_template(s: &str) -> bool {
     s.contains("{{") || s.contains("{%")
@@ -114,28 +138,28 @@ impl ResolvedConfig {
         &self.raw.rules[idx]
     }
 
-    pub fn editor(&self, name: &str) -> Result<&EditorDef> {
+    pub fn target(&self, name: &str) -> Result<&Target> {
         self.raw
-            .editors
+            .todoke
             .get(name)
-            .ok_or_else(|| anyhow!("rule references unknown editor: {name}"))
+            .ok_or_else(|| anyhow!("rule references unknown todoke target: {name}"))
     }
 
     fn compile(raw: Config) -> Result<Self> {
-        // validate editor references; skip rules whose editor field is a Tera
+        // validate rule.to references; skip rules whose `to` is a Tera
         // template (e.g. `"{{ vars.gui }}"`) — those resolve at dispatch time
         // and the dispatcher surfaces a clear error if the rendered name is
-        // still not a known editor.
+        // still not a known target.
         for (i, rule) in raw.rules.iter().enumerate() {
-            if is_template(&rule.editor) {
+            if is_template(&rule.to) {
                 continue;
             }
-            if !raw.editors.contains_key(&rule.editor) {
+            if !raw.todoke.contains_key(&rule.to) {
                 return Err(anyhow!(
-                    "rule[{i}] ({}) references unknown editor '{}'. Known editors: {}",
+                    "rule[{i}] ({}) references unknown todoke target '{}'. Known targets: {}",
                     rule.name.as_deref().unwrap_or("<unnamed>"),
-                    rule.editor,
-                    raw.editors.keys().cloned().collect::<Vec<_>>().join(", ")
+                    rule.to,
+                    raw.todoke.keys().cloned().collect::<Vec<_>>().join(", ")
                 ));
             }
         }
@@ -272,16 +296,24 @@ fn prerender(text: &str) -> Result<String> {
 
     // Self-referential placeholders keep dispatch-time tokens intact.
     for name in [
+        "input",
+        "input_type",
         "file_path",
         "file_dir",
         "file_name",
         "file_stem",
         "file_ext",
-        "editor_path",
-        "editor_dir",
-        "editor_name",
-        "editor_stem",
-        "editor_ext",
+        "url_scheme",
+        "url_host",
+        "url_port",
+        "url_path",
+        "url_query",
+        "url_fragment",
+        "command_path",
+        "command_dir",
+        "command_name",
+        "command_stem",
+        "command_ext",
         "cwd",
         "group",
         "rule",
@@ -352,7 +384,7 @@ mod tests {
     #[test]
     fn parses_default_config() {
         let cfg = load_from_str(DEFAULT_CONFIG_TOML).expect("default config must parse");
-        assert!(cfg.raw.editors.contains_key("nvim"));
+        assert!(cfg.raw.todoke.contains_key("nvim"));
         assert_eq!(cfg.raw.rules.len(), 2);
         assert_eq!(cfg.raw.rules[0].name.as_deref(), Some("editor-callback"));
         assert_eq!(cfg.raw.rules[1].name.as_deref(), Some("default"));
@@ -361,30 +393,31 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_editor_reference() {
+    fn rejects_unknown_to_reference() {
         let text = r#"
-            [editors.a]
-            kind = "generic"
+            [todoke.a]
             command = "echo"
 
             [[rules]]
             match = ".*"
-            editor = "does-not-exist"
+            to = "does-not-exist"
         "#;
         let err = load_from_str(text).unwrap_err();
-        assert!(err.to_string().contains("unknown editor"), "got: {err}");
+        assert!(
+            err.to_string().contains("unknown todoke target"),
+            "got: {err}"
+        );
     }
 
     #[test]
     fn rejects_invalid_regex() {
         let text = r#"
-            [editors.a]
-            kind = "generic"
+            [todoke.a]
             command = "echo"
 
             [[rules]]
             match = "[unterminated"
-            editor = "a"
+            to = "a"
         "#;
         let err = load_from_str(text).unwrap_err();
         assert!(
@@ -394,73 +427,91 @@ mod tests {
     }
 
     #[test]
-    fn mode_defaults_to_remote() {
+    fn mode_defaults_to_remote_kind_defaults_to_exec() {
         let text = r#"
-            [editors.a]
-            kind = "generic"
+            [todoke.a]
             command = "echo"
 
             [[rules]]
             match = ".*"
-            editor = "a"
+            to = "a"
         "#;
         let cfg = load_from_str(text).unwrap();
-        assert_eq!(cfg.raw.rules[0].mode, Mode::Remote);
+        assert_eq!(cfg.raw.rules[0].mode, "remote");
         assert!(!cfg.raw.rules[0].sync);
         assert!(cfg.raw.rules[0].group.is_none());
+        assert_eq!(cfg.raw.todoke["a"].kind, TargetKind::Exec);
+    }
+
+    #[test]
+    fn args_per_mode_with_default_fallback() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+            [todoke.a.args]
+            remote = ["--reuse"]
+            default = ["--fallback"]
+
+            [[rules]]
+            match = ".*"
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        let t = &cfg.raw.todoke["a"];
+        assert_eq!(t.args_for("remote"), &["--reuse".to_string()]);
+        assert_eq!(t.args_for("new"), &["--fallback".to_string()]);
+        assert_eq!(t.args_for("anything-else"), &["--fallback".to_string()]);
     }
 
     #[test]
     fn tera_conditional_blocks_are_applied_at_load_time() {
-        // Same source, different vars → different rule set.
         let src = r#"
             [vars]
             use_neovide = true
 
-            [editors.nvim]
+            [todoke.nvim]
             kind = "neovim"
             command = "nvim"
             listen = "/tmp/sock"
 
             {% if vars.use_neovide %}
-            [editors.nvim-gui]
+            [todoke.nvim-gui]
             kind = "neovim"
             command = "neovide"
             listen = "/tmp/sock-gui"
-            args_remote = ["--"]
+            [todoke.nvim-gui.args]
+            remote = ["--"]
             {% endif %}
 
             [[rules]]
             match = ".*"
-            editor = "nvim"
+            to = "nvim"
         "#;
         let cfg = load_from_str(src).unwrap();
-        assert!(cfg.raw.editors.contains_key("nvim-gui"));
+        assert!(cfg.raw.todoke.contains_key("nvim-gui"));
 
         let src_off = src.replace("use_neovide = true", "use_neovide = false");
         let cfg2 = load_from_str(&src_off).unwrap();
-        assert!(!cfg2.raw.editors.contains_key("nvim-gui"));
-        assert!(cfg2.raw.editors.contains_key("nvim"));
+        assert!(!cfg2.raw.todoke.contains_key("nvim-gui"));
+        assert!(cfg2.raw.todoke.contains_key("nvim"));
     }
 
     #[test]
     fn dispatch_time_placeholders_survive_prerender() {
-        // `{{ group }}` and `{{ file_path }}` must pass through pre-render
-        // intact so the dispatcher can fill them per file later.
         let src = r#"
-            [editors.nvim]
+            [todoke.nvim]
             kind = "neovim"
             command = "nvim"
             listen = '/tmp/nvim-todoke-{{ group }}.sock'
 
             [[rules]]
             match = ".*"
-            editor = "nvim"
+            to = "nvim"
             group = "{{ file_stem }}"
         "#;
         let cfg = load_from_str(src).unwrap();
         assert_eq!(
-            cfg.raw.editors["nvim"].listen.as_deref(),
+            cfg.raw.todoke["nvim"].listen.as_deref(),
             Some("/tmp/nvim-todoke-{{ group }}.sock"),
         );
         assert_eq!(cfg.raw.rules[0].group.as_deref(), Some("{{ file_stem }}"));
@@ -472,17 +523,17 @@ mod tests {
             [vars]
             gui = "neovide"
 
-            [editors.nvim]
+            [todoke.nvim]
             kind = "neovim"
             command = "{{ vars.gui }}"
             listen = "/tmp/sock"
 
             [[rules]]
             match = ".*"
-            editor = "nvim"
+            to = "nvim"
         "#;
         let cfg = load_from_str(src).unwrap();
-        assert_eq!(cfg.raw.editors["nvim"].command, "neovide");
+        assert_eq!(cfg.raw.todoke["nvim"].command, "neovide");
     }
 
     #[test]
@@ -494,17 +545,17 @@ mod tests {
             [vars.colors]
             primary = "blue"
 
-            [editors.nvim]
+            [todoke.nvim]
             kind = "neovim"
             command = "{{ vars.gui }}"
             listen = "/tmp/{{ vars.colors.primary }}"
 
             [[rules]]
             match = ".*"
-            editor = "nvim"
+            to = "nvim"
         "#;
         let cfg = load_from_str(src).unwrap();
-        assert_eq!(cfg.raw.editors["nvim"].command, "neovide");
-        assert_eq!(cfg.raw.editors["nvim"].listen.as_deref(), Some("/tmp/blue"));
+        assert_eq!(cfg.raw.todoke["nvim"].command, "neovide");
+        assert_eq!(cfg.raw.todoke["nvim"].listen.as_deref(), Some("/tmp/blue"));
     }
 }
