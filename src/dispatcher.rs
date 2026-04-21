@@ -487,6 +487,7 @@ fn run_exec(
         command: command.to_string(),
         args: rendered_args.to_vec(),
         env: target.env.clone(),
+        append_inputs: target.append_inputs,
     };
     let dctx = ExecCtx {
         inputs: &batch.inputs,

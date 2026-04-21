@@ -90,6 +90,15 @@ new    = ["--new-window"]
 [todoke.firefox]
 command = "firefox"
 
+# A second firefox target specifically for issue: inputs — the URL is
+# constructed from the capture group, so append_inputs = false tells the
+# exec backend not to tack the raw "issue:42" onto the command line as a
+# second positional.
+[todoke.gh-issue]
+command = "firefox"
+append_inputs = false
+args.default = ["https://github.com/yukimemi/todoke/issues/{{ cap.1 }}"]
+
 # git commit, rebase, etc. — always a blocking fresh nvim.
 [[rules]]
 name = "editor-callback"
@@ -98,7 +107,7 @@ to = "nvim"
 mode = "new"
 sync = true
 
-# GitHub URLs → firefox
+# GitHub URLs → firefox (URL is auto-appended by the exec backend)
 [[rules]]
 name = "gh"
 match = '^https?://(www\.)?github\.com/'
@@ -116,11 +125,7 @@ mode = "remote"
 [[rules]]
 name = "gh-issue"
 match = '^issue:(\d+)$'
-to = "firefox"
-
-[todoke.firefox]
-command = "firefox"
-args.default = ["https://github.com/yukimemi/todoke/issues/{{ cap.1 }}"]
+to = "gh-issue"
 
 # Default: everything else goes to the shared nvim.
 [[rules]]
@@ -234,6 +239,7 @@ A delivery target (the value behind a rule's `to = "<name>"`).
 | `command`  | string                              | yes      | the handler binary (PATH-resolved)                              |
 | `listen`   | string                              | neovim   | socket / named pipe path for RPC                                |
 | `args`     | table of `<mode>` → `array<string>` | no       | args injected based on `rule.mode`; `args.default` is the fallback when no key matches |
+| `append_inputs` | bool                           | `true`   | `exec` kind only: whether each input's display string is appended as a trailing positional arg after `args`. Set to `false` when `args` already reference the input via `{{ input }}` / `{{ cap.N }}` and you don't want the raw value passed twice. |
 | `env`      | table                               | no       | env vars passed to the spawned handler                          |
 
 ### `[[rules]]`

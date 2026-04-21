@@ -48,6 +48,17 @@ pub struct Target {
     pub args: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// When `true` (the default), the exec backend appends each input's
+    /// display string as a trailing positional arg after the rendered
+    /// `args` list. Set to `false` when your `args` already reference the
+    /// input via templates like `{{ input }}` / `{{ cap.N }}` and you
+    /// don't want the raw value passed again.
+    #[serde(default = "default_true")]
+    pub append_inputs: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Target {

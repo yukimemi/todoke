@@ -27,6 +27,9 @@ pub struct ExecBackend {
     pub command: String,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
+    /// Whether to append each input's display string as a trailing arg
+    /// after the rendered `args` list. Defaults to true.
+    pub append_inputs: bool,
 }
 
 pub struct DispatchCtx<'a> {
@@ -46,8 +49,10 @@ impl ExecBackend {
 
         let mut cmd = StdCommand::new(&self.command);
         cmd.args(&rendered_args);
-        for i in dctx.inputs {
-            cmd.arg(i.display_string());
+        if self.append_inputs {
+            for i in dctx.inputs {
+                cmd.arg(i.display_string());
+            }
         }
         for (k, v) in &self.env {
             cmd.env(k, v);
@@ -57,6 +62,7 @@ impl ExecBackend {
             command = %self.command,
             args = ?rendered_args,
             count = dctx.inputs.len(),
+            append_inputs = self.append_inputs,
             sync = dctx.sync,
             mode = dctx.mode,
             "exec dispatch"
@@ -124,6 +130,7 @@ mod tests {
                 "--ext={{ file_ext }}".into(),
             ],
             env: BTreeMap::new(),
+            append_inputs: true,
         };
         let inputs = vec![Input::File(PathBuf::from("/tmp/hello.rs"))];
         let vars = BTreeMap::new();
