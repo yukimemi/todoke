@@ -201,6 +201,33 @@ mode = "remote"
 One target definition, three valid command lines. Adding a new wrapper in
 the future is one entry in `wrapper_guis`.
 
+### Recipe: categorized `match` patterns
+
+`match` accepts either a single regex string or an array. The array form
+is OR-matched (hit any → rule fires) and is the right shape when a rule's
+intent spans several unrelated sources — `$EDITOR`-callback files are a
+classic example because every tool sprinkles its own filename convention:
+
+```toml
+[[rules]]
+name = "editor-callback"
+match = [
+  # git
+  '(?i)/(COMMIT_EDITMSG|MERGE_MSG|TAG_EDITMSG|EDIT_DESCRIPTION|git-rebase-todo|NOTES_EDITMSG|\.gitmessage)$',
+  # svn / hg
+  '(?i)/svn-commit\.tmp$',
+  # Claude Code prompt temp files
+  '(?i)/claude-prompt-.*$',
+]
+to = "nvim-term"
+mode = "new"
+sync = true
+```
+
+Each bucket is its own readable regex; extending for a new tool is
+appending one line with a `# new-tool` comment instead of threading
+another alternation into a long single-string pattern.
+
 ### As `$EDITOR`
 
 ```sh
