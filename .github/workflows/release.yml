@@ -75,4 +75,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # --locked keeps the committed Cargo.lock so the publish verification
+      # step cannot fail the dirty-git-state check by rewriting the lock.
+      - run: cargo publish --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
