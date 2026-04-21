@@ -40,7 +40,7 @@ regex = "1.12.3"
 serde = { version = "1.0.228", features = ["derive"] }
 supports-color = "3.0.2"
 tera = "1.20.1"
-url = "2"
+url = "2.5.8"
 thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = ["full"] }
 toml = "0.8"
