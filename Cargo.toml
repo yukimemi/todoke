@@ -30,7 +30,7 @@ include = [
 winresource = "0.1.31"
 
 [dependencies]
-anyhow = "1"
+anyhow = "1.0.102"
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 directories = "5"
