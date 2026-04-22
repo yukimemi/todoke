@@ -163,10 +163,10 @@ todoke https://github.com/yukimemi/todoke
 todoke issue:42      # → firefox opens issues/42
 todoke HEAD          # → firefox opens the repo tree at HEAD
 
-# --as is only needed when auto-detection would get it wrong — typically
-# when a file of the same name exists in cwd and you want the string
-# routed as raw instead. Example: you're inside a git worktree and
-# `HEAD` resolves as a file, but you want the git-ref rule to win:
+# --as picks which classification you want when both are valid. Inside
+# a git worktree `HEAD` resolves as a file (the .git/HEAD pointer),
+# so plain `todoke HEAD` opens the file in nvim. Use --as raw to force
+# the raw string through the gh-ref rule and open the tree URL instead.
 todoke --as raw HEAD
 
 # See which rule would match, without actually dispatching
