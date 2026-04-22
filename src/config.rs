@@ -139,6 +139,15 @@ pub struct Rule {
     /// via capture-driven arg templates).
     #[serde(default)]
     pub passthrough: bool,
+    /// Number of following argv items to **also** forward as passthrough
+    /// when this rule matches. Only meaningful when `passthrough = true`.
+    ///
+    /// Designed for spaced-value editor flags like `-c :set ft=md` where
+    /// the value (`:set ft=md`) is its own argv. With `consumes = 1`,
+    /// matching `^-c$` on the flag pulls the next argv along so both
+    /// strings reach the target's start-up command line intact.
+    #[serde(default)]
+    pub consumes: usize,
 }
 
 /// One or many [`InputKind`]s — mirrors [`StringOrVec`] so TOML users can
@@ -218,6 +227,13 @@ impl ResolvedConfig {
                 return Err(anyhow!(
                     "rule[{i}] ({}) sets both joined = true and passthrough = true — these are mutually exclusive; joined already lets args templates place captures anywhere, so passthrough is redundant",
                     rule.name.as_deref().unwrap_or("<unnamed>"),
+                ));
+            }
+            if rule.consumes > 0 && !rule.passthrough {
+                return Err(anyhow!(
+                    "rule[{i}] ({}) has consumes = {} but passthrough = false — consumes only applies to passthrough rules",
+                    rule.name.as_deref().unwrap_or("<unnamed>"),
+                    rule.consumes,
                 ));
             }
             if is_template(&rule.to) {
@@ -491,6 +507,25 @@ mod tests {
         let err = load_from_str(text).unwrap_err();
         assert!(
             err.to_string().contains("failed to compile match pattern"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_consumes_without_passthrough() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = '.*'
+            to = "a"
+            consumes = 1
+        "#;
+        let err = load_from_str(text).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("consumes only applies to passthrough"),
             "got: {err}"
         );
     }

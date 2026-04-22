@@ -300,11 +300,34 @@ fn plan_batches(
     //     a runtime warn (doctor can't catch it because group/target are
     //     Tera templates that only resolve at dispatch time).
     let mut groups: BTreeMap<BatchKey, Batch> = BTreeMap::new();
-    let mut pending_passthrough: Vec<(String, usize, CaptureMap, Input)> = Vec::new();
+    // Each pending entry carries the full flag-plus-consumed sequence as a
+    // Vec<String> so spaced-value flags (`-c :set ft=md`) stay intact.
+    let mut pending_passthrough: Vec<(Vec<String>, usize, CaptureMap, Input)> = Vec::new();
 
-    for (raw, input) in raws.iter().zip(inputs.iter()) {
+    let mut idx = 0;
+    while idx < raws.len() {
+        let raw = &raws[idx];
+        let input = &inputs[idx];
+
         if let Some((rule_idx, cap)) = first_passthrough_match(cfg, raw) {
-            pending_passthrough.push((raw.clone(), rule_idx, cap, input.clone()));
+            let consumes = cfg.rule(rule_idx).consumes;
+            let mut consumed = vec![raw.clone()];
+            for k in 1..=consumes {
+                let take = idx + k;
+                if take >= raws.len() {
+                    warn!(
+                        rule_idx,
+                        consumes,
+                        available = raws.len() - idx - 1,
+                        "passthrough rule wanted to consume more argv than remain; taking what's left",
+                    );
+                    break;
+                }
+                consumed.push(raws[take].clone());
+            }
+            let advance = consumed.len();
+            pending_passthrough.push((consumed, rule_idx, cap, input.clone()));
+            idx += advance;
             continue;
         }
 
@@ -315,6 +338,7 @@ fn plan_batches(
             Some(tuple) => tuple,
             None => {
                 warn!(subject = %subject, "no rule matched, skipping");
+                idx += 1;
                 continue;
             }
         };
@@ -355,10 +379,11 @@ fn plan_batches(
             cap: cap.clone(),
         });
         batch.inputs.push(input.clone());
+        idx += 1;
     }
 
     // Phase 2b.
-    for (raw, rule_idx, cap, input) in pending_passthrough {
+    for (consumed, rule_idx, cap, input) in pending_passthrough {
         let rule = cfg.rule(rule_idx);
         let rule_name = rule
             .name
@@ -417,7 +442,9 @@ fn plan_batches(
             passthrough_inputs: Vec::new(),
             cap: cap.clone(),
         });
-        batch.passthrough_inputs.push(raw);
+        for item in consumed {
+            batch.passthrough_inputs.push(item);
+        }
         for (k, v) in cap {
             batch.cap.insert(k, v);
         }

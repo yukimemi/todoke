@@ -285,8 +285,19 @@ sync = true
 ```
 
 `todoke +42 foo.txt bar.txt` now spawns `nvim +42 foo.txt bar.txt`
-(multi-file still works, `+42` rides along as a flag). A separate
-`-c :set ...` rule can be added the same way.
+(multi-file still works, `+42` rides along as a flag). For spaced
+values like `-c :set ft=md` where the flag and its value are separate
+argv items, use `consumes` to pull the next argv along:
+
+```toml
+[[rules]]
+name = "nvim-c"
+match = '^-c$'
+to = "nvim-term"
+sync = true
+passthrough = true
+consumes = 1       # `-c` + next argv both forwarded as passthrough
+```
 
 Passthrough inputs are merged into the **normal rule's batch** that
 shares the same `(target, group)` — so a passthrough rule's `mode` /
@@ -380,6 +391,7 @@ A delivery target (the value behind a rule's `to = "<name>"`).
 | `input_type` | `"file" \| "url" \| "raw"` or array | all kinds | restrict which input kinds this rule applies to. Example: `input_type = "raw"` makes the rule fire only for `--as raw` / auto-detected Raw inputs — useful for git-ref style patterns (`^HEAD$`, `^main$`) that must not shadow a local file of the same name. |
 | `joined`   | bool                       | `false`     | match against the full argv-join (all positional args concatenated with spaces, **pre auto-detect**) instead of each input individually. On a hit, the named capture `input` is re-classified via `Input::from_arg` and becomes the batch's sole input; other captures ride along in `{{ cap.<name> }}` for the target's args templates. Designed for `$EDITOR=todoke +42 file.txt` style calls. Mutually exclusive with `passthrough`. |
 | `passthrough` | bool                    | `false`     | match against the **raw argv** (pre auto-detect) per input. On a hit, the raw string is forwarded to the target's start-up argv instead of being opened/edited. Use for editor flags like `+42` / `-c :set ft=...`. Mutually exclusive with `joined`. |
+| `consumes` | non-negative int           | `0`         | only valid with `passthrough = true`. When the rule matches, also forward the next **N** argv items as part of the same passthrough sequence. Designed for spaced-value flags like `-c :set ft=md` where the value is its own argv — a `consumes = 1` on `match = '^-c$'` keeps the flag and its value together. |
 
 ### Template context
 
