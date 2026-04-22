@@ -13,7 +13,7 @@ use crate::backends::{
 use crate::cli::Cli;
 use crate::config::{self, ResolvedConfig, Rule, Target, TargetKind};
 use crate::input::{Input, InputKind};
-use crate::matcher::{CaptureMap, first_match};
+use crate::matcher::{CaptureMap, first_joined_match, first_match, first_passthrough_match};
 use crate::style::{
     accent, bold, dim, level_error, level_info, level_ok, level_warn, muted, styled,
 };
@@ -21,11 +21,12 @@ use crate::template::{Context, build_context, new_engine, render};
 
 pub async fn dispatch(cli: &Cli, files: &[PathBuf]) -> Result<()> {
     let cfg = config::load(cli.config.as_deref())?;
+    let raws = raw_argv(files);
     let inputs = load_inputs(cli, files)?;
     let plan = if inputs.is_empty() {
         plan_no_args(cli, &cfg)?
     } else {
-        plan_batches(cli, &cfg, &inputs)?
+        plan_batches(cli, &cfg, &inputs, &raws)?
     };
 
     debug!(batches = plan.len(), "dispatch plan built");
@@ -40,10 +41,17 @@ pub async fn dispatch(cli: &Cli, files: &[PathBuf]) -> Result<()> {
 
 pub async fn check(cli: &Cli, files: &[PathBuf]) -> Result<()> {
     let cfg = config::load(cli.config.as_deref())?;
+    let raws = raw_argv(files);
     let inputs = load_inputs(cli, files)?;
-    let plan = plan_batches(cli, &cfg, &inputs)?;
+    let plan = plan_batches(cli, &cfg, &inputs, &raws)?;
     print_plan(&plan);
     Ok(())
+}
+
+fn raw_argv(raws: &[PathBuf]) -> Vec<String> {
+    raws.iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
 }
 
 fn load_inputs(cli: &Cli, raws: &[PathBuf]) -> Result<Vec<Input>> {
@@ -191,6 +199,11 @@ pub struct Batch {
     pub sync: bool,
     pub rule_name: String,
     pub inputs: Vec<Input>,
+    /// Raw argv strings forwarded verbatim to the target's start-up argv.
+    /// Populated by rules with `passthrough = true` — those inputs are
+    /// NOT opened via `:edit` / URL open, only handed to the handler
+    /// command line. Typical use: editor flags like `+42`, `-c :set ...`.
+    pub passthrough_inputs: Vec<String>,
     /// Captures from the first input that resolved to this batch — used for
     /// rendering the target's command / listen / args templates. For a
     /// per-input capture model see the per-input rendering in the backends.
@@ -246,20 +259,82 @@ fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
         sync: rule.sync,
         rule_name,
         inputs: Vec::new(),
+        passthrough_inputs: Vec::new(),
         cap,
     }])
 }
 
-fn plan_batches(cli: &Cli, cfg: &ResolvedConfig, inputs: &[Input]) -> Result<Vec<Batch>> {
+fn plan_batches(
+    cli: &Cli,
+    cfg: &ResolvedConfig,
+    inputs: &[Input],
+    raws: &[String],
+) -> Result<Vec<Batch>> {
     let cwd = std::env::current_dir()
         .context("could not read current directory")?
         .to_string_lossy()
         .into_owned();
 
     let mut tera = new_engine();
+
+    // Phase 1: try joined rules against the raw argv-join subject (pre
+    // auto-detect, so editor flags like `+42` haven't been absolutized
+    // into file paths). First hit claims all inputs and produces a single
+    // batch. Falls through to per-input matching when no joined rule hits.
+    if !raws.is_empty() {
+        let joined_subject = raws.join(" ");
+        if let Some((rule_idx, cap)) = first_joined_match(cfg, &joined_subject) {
+            return build_joined_batch(cli, cfg, &mut tera, &cwd, rule_idx, cap);
+        }
+    }
+
+    // Phase 2: per-input match. Each argv is first tried against
+    // passthrough rules using the RAW string (so `+42` still reads as
+    // `+42`, not as a file path). On no passthrough hit, fall back to the
+    // normal `match_string`-based match on the classified input.
     let mut groups: BTreeMap<BatchKey, Batch> = BTreeMap::new();
 
-    for input in inputs {
+    for (raw, input) in raws.iter().zip(inputs.iter()) {
+        if let Some((rule_idx, cap)) = first_passthrough_match(cfg, raw) {
+            let rule = cfg.rule(rule_idx);
+            let rule_name = rule
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("rule[{rule_idx}]"));
+            let ctx = build_context(Context {
+                input: Some(input),
+                command: "",
+                cwd: &cwd,
+                group: "",
+                rule_name: &rule_name,
+                vars: &cfg.raw.vars,
+                cap: &cap,
+            });
+            let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx)?;
+            let target_name = resolve_target_name(cli, rule, &mut tera, &ctx)?;
+            let key = BatchKey {
+                target: target_name.clone(),
+                group: group.clone(),
+                mode: rule.mode.clone(),
+                sync: rule.sync,
+            };
+            let batch = groups.entry(key).or_insert_with(|| Batch {
+                target_name: target_name.clone(),
+                group: group.clone(),
+                mode: rule.mode.clone(),
+                sync: rule.sync,
+                rule_name: rule_name.clone(),
+                inputs: Vec::new(),
+                passthrough_inputs: Vec::new(),
+                cap: cap.clone(),
+            });
+            batch.passthrough_inputs.push(raw.clone());
+            for (k, v) in cap {
+                batch.cap.insert(k, v);
+            }
+            continue;
+        }
+
         let subject = input.match_string();
         let kind = input.kind();
 
@@ -296,22 +371,76 @@ fn plan_batches(cli: &Cli, cfg: &ResolvedConfig, inputs: &[Input]) -> Result<Vec
             sync: rule.sync,
         };
 
-        groups
-            .entry(key)
-            .or_insert_with(|| Batch {
-                target_name: target_name.clone(),
-                group: group.clone(),
-                mode: rule.mode.clone(),
-                sync: rule.sync,
-                rule_name: rule_name.clone(),
-                inputs: Vec::new(),
-                cap: cap.clone(),
-            })
-            .inputs
-            .push(input.clone());
+        let batch = groups.entry(key).or_insert_with(|| Batch {
+            target_name: target_name.clone(),
+            group: group.clone(),
+            mode: rule.mode.clone(),
+            sync: rule.sync,
+            rule_name: rule_name.clone(),
+            inputs: Vec::new(),
+            passthrough_inputs: Vec::new(),
+            cap: cap.clone(),
+        });
+        batch.inputs.push(input.clone());
     }
 
     Ok(groups.into_values().collect())
+}
+
+/// Build a single-batch plan from a `joined` rule hit. The named capture
+/// `input` (or `cap.0` as fallback) is re-classified via `Input::from_arg`
+/// and becomes the sole input of the batch. All other captures ride along
+/// in `batch.cap` for the target's arg templates.
+fn build_joined_batch(
+    cli: &Cli,
+    cfg: &ResolvedConfig,
+    tera: &mut tera::Tera,
+    cwd: &str,
+    rule_idx: usize,
+    cap: CaptureMap,
+) -> Result<Vec<Batch>> {
+    let rule = cfg.rule(rule_idx);
+    let rule_name = rule
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("rule[{rule_idx}]"));
+
+    let raw_input = cap
+        .get("input")
+        .cloned()
+        .or_else(|| cap.get("0").cloned())
+        .unwrap_or_default();
+    let inputs = if raw_input.is_empty() {
+        Vec::new()
+    } else {
+        vec![
+            Input::from_arg(&raw_input)
+                .with_context(|| format!("joined rule `{rule_name}` input re-classification"))?,
+        ]
+    };
+
+    let ctx = build_context(Context {
+        input: inputs.first(),
+        command: "",
+        cwd,
+        group: "",
+        rule_name: &rule_name,
+        vars: &cfg.raw.vars,
+        cap: &cap,
+    });
+    let group = resolve_group_with_ctx(cli, rule, tera, &ctx)?;
+    let target_name = resolve_target_name(cli, rule, tera, &ctx)?;
+
+    Ok(vec![Batch {
+        target_name,
+        group,
+        mode: rule.mode.clone(),
+        sync: rule.sync,
+        rule_name,
+        inputs,
+        passthrough_inputs: Vec::new(),
+        cap,
+    }])
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -456,6 +585,7 @@ async fn run_neovim(
         sync = batch.sync,
         listen = %listen,
         files = ?files,
+        passthrough = ?batch.passthrough_inputs,
         "dispatching to neovim"
     );
 
@@ -464,6 +594,7 @@ async fn run_neovim(
         listen,
         args_remote,
         args_new,
+        passthrough: batch.passthrough_inputs.clone(),
     };
     backend.dispatch(&files, &batch.mode, batch.sync).await
 }
@@ -493,6 +624,7 @@ fn run_exec(
     };
     let dctx = ExecCtx {
         inputs: &batch.inputs,
+        passthrough: &batch.passthrough_inputs,
         mode: &batch.mode,
         sync: batch.sync,
         group: &batch.group,
@@ -537,6 +669,14 @@ fn print_plan(plan: &[Batch]) {
                 styled("-", muted()),
                 styled(format!("[{}]", inp.kind_label()), dim()),
                 styled(inp.display_string(), dim()),
+            );
+        }
+        for p in &b.passthrough_inputs {
+            println!(
+                "      {} {} {}",
+                styled("-", muted()),
+                styled("[passthrough]", dim()),
+                styled(p, dim()),
             );
         }
     }

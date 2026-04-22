@@ -48,6 +48,15 @@ pub struct NeovimBackend {
     pub listen: String,
     pub args_remote: Vec<String>,
     pub args_new: Vec<String>,
+    /// Raw flag-like argv (e.g. `+42`, `-c :set ft=gitcommit`) forwarded to
+    /// nvim's start-up command line. Inserted before the file list so the
+    /// classic `nvim +42 file.txt` layout is honored.
+    ///
+    /// remote-mode dispatches can't forward these to an already-running
+    /// nvim (the RPC session is long past start-up), so `dispatch_remote`
+    /// warns and drops them. Spawn paths (`new`, or remote fallback
+    /// `spawn_detached_with_listen`) honor them.
+    pub passthrough: Vec<String>,
 }
 
 impl NeovimBackend {
@@ -79,6 +88,12 @@ impl NeovimBackend {
     /// connect failure, spawn a detached nvim with `--listen` so the next
     /// remote dispatch finds it.
     async fn dispatch_remote(&self, files: &[PathBuf]) -> Result<()> {
+        if !self.passthrough.is_empty() {
+            warn!(
+                passthrough = ?self.passthrough,
+                "passthrough flags are ignored for remote-mode neovim (RPC is post-startup)",
+            );
+        }
         match create::new_path(self.listen.as_str(), DummyHandler).await {
             Ok((nvim, _io_handle)) => {
                 info!(pipe = %self.listen, count = files.len(), "connected to existing nvim");
@@ -103,9 +118,12 @@ impl NeovimBackend {
         }
     }
 
-    /// Argv layout: `command FILES... <args_remote>... --listen LISTEN`.
+    /// Argv layout: `command <passthrough>... FILES... <args_remote>... --listen LISTEN`.
     fn spawn_detached_with_listen(&self, files: &[PathBuf]) -> Result<()> {
         let mut cmd = StdCommand::new(&self.command);
+        for p in &self.passthrough {
+            cmd.arg(p);
+        }
         for f in files {
             cmd.arg(f);
         }
@@ -126,6 +144,9 @@ impl NeovimBackend {
         for a in &self.args_new {
             cmd.arg(a);
         }
+        for p in &self.passthrough {
+            cmd.arg(p);
+        }
         for f in files {
             cmd.arg(f);
         }
@@ -141,6 +162,9 @@ impl NeovimBackend {
         let mut cmd = StdCommand::new(&self.command);
         for a in &self.args_new {
             cmd.arg(a);
+        }
+        for p in &self.passthrough {
+            cmd.arg(p);
         }
         for f in files {
             cmd.arg(f);

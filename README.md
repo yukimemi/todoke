@@ -250,6 +250,56 @@ Each bucket is its own readable regex; extending for a new tool is
 appending one line with a `# new-tool` comment instead of threading
 another alternation into a long single-string pattern.
 
+### Recipe: editor-flag passthrough (`+42 file.txt`)
+
+Some `$EDITOR` callers (vim-aware Git frontends, `sudo -e`, etc.) pass
+`nvim`-style flags ahead of the file — e.g. `+42 file.txt` to jump to
+line 42. todoke's auto-detection would otherwise absolutize `+42` into
+a file path. Two ways to handle it:
+
+**Option A — `passthrough`** (simple; good for individual flag classes):
+
+```toml
+[[rules]]
+name = "nvim-flag"
+match = '^[-+]'          # matches against the RAW argv, pre auto-detect
+to = "nvim-term"
+sync = true
+passthrough = true       # forward as-is to nvim's start-up argv
+
+[[rules]]
+name = "nvim-file"
+match = '.*'
+to = "nvim-term"
+sync = true
+```
+
+`todoke +42 foo.txt bar.txt` now spawns `nvim +42 foo.txt bar.txt`
+(multi-file still works, `+42` rides along as a flag). A separate
+`-c :set ...` rule can be added the same way.
+
+**Option B — `joined`** (flexible; one rule captures the whole argv):
+
+```toml
+[[rules]]
+name = "nvim-with-line"
+match = '^(?P<pre>\+\d+ )?(?P<input>\S+)$'
+to = "nvim-term"
+sync = true
+joined = true
+
+[todoke.nvim-term.args]
+default = ["{{ cap.pre | default(value='') | trim }}"]
+# append_inputs = true is still default so {{ cap.input }} is opened
+# by the handler after args; the captured flag rides in the args list.
+```
+
+`joined` matches once against the space-joined argv. The named capture
+`input` is re-classified (so a nonexistent `foo.txt` still becomes a
+`File` and `:edit`-able), and `cap.pre` ends up in the args. Use
+`joined` when you want a single regex describing the full invocation
+shape; use `passthrough` when each flag has its own rule.
+
 ### As `$EDITOR`
 
 ```sh
@@ -311,6 +361,8 @@ A delivery target (the value behind a rule's `to = "<name>"`).
 | `mode`    | string                    | `"remote"`   | free-form; `"remote"` / `"new"` are reserved for neovim behavior, otherwise used only to pick `args.<mode>` |
 | `sync`    | bool                      | `false`      | `true` = block until handler exits           |
 | `input_type` | `"file" \| "url" \| "raw"` or array | all kinds | restrict which input kinds this rule applies to. Example: `input_type = "raw"` makes the rule fire only for `--as raw` / auto-detected Raw inputs — useful for git-ref style patterns (`^HEAD$`, `^main$`) that must not shadow a local file of the same name. |
+| `joined`   | bool                       | `false`     | match against the full argv-join (all positional args concatenated with spaces, **pre auto-detect**) instead of each input individually. On a hit, the named capture `input` is re-classified via `Input::from_arg` and becomes the batch's sole input; other captures ride along in `{{ cap.<name> }}` for the target's args templates. Designed for `$EDITOR=todoke +42 file.txt` style calls. Mutually exclusive with `passthrough`. |
+| `passthrough` | bool                    | `false`     | match against the **raw argv** (pre auto-detect) per input. On a hit, the raw string is forwarded to the target's start-up argv instead of being opened/edited. Use for editor flags like `+42` / `-c :set ft=...`. Mutually exclusive with `joined`. |
 
 ### Template context
 

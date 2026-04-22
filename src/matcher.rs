@@ -76,37 +76,84 @@ pub fn first_match(
     kind: Option<InputKind>,
 ) -> Option<(usize, CaptureMap)> {
     for (i, regexes) in cfg.rule_regexes.iter().enumerate() {
+        let rule = &cfg.raw.rules[i];
+        // joined and passthrough rules are tried in their own phases — not
+        // here — because they want to see the RAW argv rather than the
+        // auto-detected input's match_string (which would've already
+        // absolutized `+42` into a file path).
+        if rule.joined || rule.passthrough {
+            continue;
+        }
         if let Some(k) = kind {
-            if let Some(allowed) = &cfg.raw.rules[i].input_type {
+            if let Some(allowed) = &rule.input_type {
                 if !allowed.contains(k) {
                     continue;
                 }
             }
         }
-        let hit = regexes
-            .iter()
-            .find_map(|re| re.captures(subject).map(|c| (re, c)));
-        let Some((re, caps)) = hit else {
-            continue;
-        };
-        if cfg.rule_excludes[i].iter().any(|r| r.is_match(subject)) {
-            continue;
+        if let Some(map) = try_match_rule(regexes, &cfg.rule_excludes[i], subject) {
+            return Some((i, map));
         }
-
-        let mut map = CaptureMap::new();
-        for idx in 0..caps.len() {
-            if let Some(m) = caps.get(idx) {
-                map.insert(idx.to_string(), m.as_str().to_string());
-            }
-        }
-        for name in re.capture_names().flatten() {
-            if let Some(m) = caps.name(name) {
-                map.insert(name.to_string(), m.as_str().to_string());
-            }
-        }
-        return Some((i, map));
     }
     None
+}
+
+/// Run only `passthrough = true` rules against a raw argv string. Used by
+/// the dispatcher to detect editor flags (`+42`, `-c :set ...`) before they
+/// are absolutized into file paths by auto-detection.
+pub fn first_passthrough_match(cfg: &ResolvedConfig, subject: &str) -> Option<(usize, CaptureMap)> {
+    for (i, regexes) in cfg.rule_regexes.iter().enumerate() {
+        let rule = &cfg.raw.rules[i];
+        if !rule.passthrough {
+            continue;
+        }
+        if let Some(map) = try_match_rule(regexes, &cfg.rule_excludes[i], subject) {
+            return Some((i, map));
+        }
+    }
+    None
+}
+
+/// Variant of [`first_match`] that only considers rules with `joined = true`
+/// and runs them against the full argv-join subject string. Called before
+/// per-input matching so `$EDITOR=todoke +42 file.txt` style invocations can
+/// be captured in one shot.
+pub fn first_joined_match(cfg: &ResolvedConfig, subject: &str) -> Option<(usize, CaptureMap)> {
+    for (i, regexes) in cfg.rule_regexes.iter().enumerate() {
+        let rule = &cfg.raw.rules[i];
+        if !rule.joined {
+            continue;
+        }
+        if let Some(map) = try_match_rule(regexes, &cfg.rule_excludes[i], subject) {
+            return Some((i, map));
+        }
+    }
+    None
+}
+
+fn try_match_rule(
+    regexes: &[regex::Regex],
+    excludes: &[regex::Regex],
+    subject: &str,
+) -> Option<CaptureMap> {
+    let (re, caps) = regexes
+        .iter()
+        .find_map(|re| re.captures(subject).map(|c| (re, c)))?;
+    if excludes.iter().any(|r| r.is_match(subject)) {
+        return None;
+    }
+    let mut map = CaptureMap::new();
+    for idx in 0..caps.len() {
+        if let Some(m) = caps.get(idx) {
+            map.insert(idx.to_string(), m.as_str().to_string());
+        }
+    }
+    for name in re.capture_names().flatten() {
+        if let Some(m) = caps.name(name) {
+            map.insert(name.to_string(), m.as_str().to_string());
+        }
+    }
+    Some(map)
 }
 
 /// Shorter form for callers that don't want captures.
@@ -389,6 +436,62 @@ mod tests {
             Some(0),
         );
         assert!(first_match(&cfg, "x", Some(InputKind::Url)).is_none());
+    }
+
+    #[test]
+    fn joined_rule_is_skipped_by_first_match() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            name = "joined"
+            match = '.*'
+            to = "a"
+            joined = true
+
+            [[rules]]
+            name = "fallback"
+            match = '.*'
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        // per-input first_match skips joined rules; fallback wins.
+        assert_eq!(first_match_idx(&cfg, "anything"), Some(1));
+    }
+
+    #[test]
+    fn first_joined_match_only_sees_joined_rules() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            name = "plain"
+            match = '.*'
+            to = "a"
+
+            [[rules]]
+            name = "joined"
+            match = '^(?P<pre>\+\d+ )?(?P<input>.+)$'
+            to = "a"
+            joined = true
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        let (idx, cap) = first_joined_match(&cfg, "+42 foo.txt").unwrap();
+        assert_eq!(idx, 1);
+        assert_eq!(cap.get("pre").map(String::as_str), Some("+42 "));
+        assert_eq!(cap.get("input").map(String::as_str), Some("foo.txt"));
+        // Without any joined rule, returns None.
+        let text2 = r#"
+            [todoke.a]
+            command = "echo"
+            [[rules]]
+            match = '.*'
+            to = "a"
+        "#;
+        let cfg2 = load_from_str(text2).unwrap();
+        assert!(first_joined_match(&cfg2, "anything").is_none());
     }
 
     #[test]

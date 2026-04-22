@@ -34,6 +34,10 @@ pub struct ExecBackend {
 
 pub struct DispatchCtx<'a> {
     pub inputs: &'a [Input],
+    /// Raw argv strings from `passthrough = true` rules. Inserted after the
+    /// rendered `args` list and before the trailing input append, so target
+    /// command lines look like `cmd <args> <passthrough> <inputs>`.
+    pub passthrough: &'a [String],
     pub mode: &'a str,
     pub sync: bool,
     pub group: &'a str,
@@ -49,6 +53,9 @@ impl ExecBackend {
 
         let mut cmd = StdCommand::new(&self.command);
         cmd.args(&rendered_args);
+        for p in dctx.passthrough {
+            cmd.arg(p);
+        }
         if self.append_inputs {
             for i in dctx.inputs {
                 cmd.arg(i.display_string());
@@ -61,6 +68,7 @@ impl ExecBackend {
         debug!(
             command = %self.command,
             args = ?rendered_args,
+            passthrough = ?dctx.passthrough,
             count = dctx.inputs.len(),
             append_inputs = self.append_inputs,
             sync = dctx.sync,
@@ -133,10 +141,12 @@ mod tests {
             append_inputs: true,
         };
         let inputs = vec![Input::File(PathBuf::from("/tmp/hello.rs"))];
+        let passthrough: Vec<String> = Vec::new();
         let vars = BTreeMap::new();
         let cap = CaptureMap::new();
         let dctx = DispatchCtx {
             inputs: &inputs,
+            passthrough: &passthrough,
             mode: "new",
             sync: false,
             group: "g",

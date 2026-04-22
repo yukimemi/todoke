@@ -116,6 +116,29 @@ pub struct Rule {
     /// `input_type = "raw"` so it only fires for `--as raw HEAD`.
     #[serde(default)]
     pub input_type: Option<InputTypes>,
+    /// When true, this rule matches against the space-joined argv (all
+    /// inputs concatenated) instead of each input individually. On a hit,
+    /// the named capture `input` is re-classified via `Input::from_arg`
+    /// and becomes the sole input of the resulting batch; the remaining
+    /// captures are available to the target's arg templates as
+    /// `{{ cap.<name> }}`.
+    ///
+    /// Designed for the `$EDITOR=todoke +42 file.txt` pattern where the
+    /// caller passes editor-specific flags ahead of the file. Mutually
+    /// exclusive with `passthrough`.
+    #[serde(default)]
+    pub joined: bool,
+    /// When true, inputs matched by this rule are NOT opened (no `:edit`,
+    /// no URL open, no positional append). Instead, the raw argv string is
+    /// injected into the target's start-up argv as a passthrough flag.
+    /// Use for rules like `match = '^[-+]'` that catch editor flags
+    /// (`+42`, `-c :set ft=...`) and forward them verbatim to the handler
+    /// command line.
+    ///
+    /// Mutually exclusive with `joined` (joined achieves the same effect
+    /// via capture-driven arg templates).
+    #[serde(default)]
+    pub passthrough: bool,
 }
 
 /// One or many [`InputKind`]s — mirrors [`StringOrVec`] so TOML users can
@@ -191,6 +214,12 @@ impl ResolvedConfig {
         // and the dispatcher surfaces a clear error if the rendered name is
         // still not a known target.
         for (i, rule) in raw.rules.iter().enumerate() {
+            if rule.joined && rule.passthrough {
+                return Err(anyhow!(
+                    "rule[{i}] ({}) sets both joined = true and passthrough = true — these are mutually exclusive; joined already lets args templates place captures anywhere, so passthrough is redundant",
+                    rule.name.as_deref().unwrap_or("<unnamed>"),
+                ));
+            }
             if is_template(&rule.to) {
                 continue;
             }
@@ -464,6 +493,22 @@ mod tests {
             err.to_string().contains("failed to compile match pattern"),
             "got: {err}"
         );
+    }
+
+    #[test]
+    fn rejects_joined_and_passthrough_both_true() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = '.*'
+            to = "a"
+            joined = true
+            passthrough = true
+        "#;
+        let err = load_from_str(text).unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"), "got: {err}");
     }
 
     #[test]
