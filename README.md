@@ -76,6 +76,9 @@ new    = ["--new-window"]
 
 [todoke.firefox]
 command = "firefox"
+# gui = true skips `cmd /c start` on Windows, so no cmd window flashes
+# before firefox. Unix: no-op.
+gui = true
 
 # A second firefox target specifically for issue: inputs — the URL is
 # constructed from the capture group, so append_inputs = false tells the
@@ -83,12 +86,14 @@ command = "firefox"
 # second positional.
 [todoke.gh-issue]
 command = "firefox"
+gui = true
 append_inputs = false
 args.default = ["https://github.com/yukimemi/todoke/issues/{{ cap.1 }}"]
 
 # Git-ref target: opens the GitHub tree browser at a branch / tag / sha.
 [todoke.gh-ref]
 command = "firefox"
+gui = true
 append_inputs = false
 args.default = ["https://github.com/yukimemi/todoke/tree/{{ input }}"]
 
@@ -201,6 +206,11 @@ wrapper_guis = ["neovide", "nvim-qt"]
 kind = "neovim"
 command = "{{ vars.gui }}"
 listen = '{% if is_windows() %}\\.\pipe\nvim-todoke-{{ group }}{% else %}/tmp/nvim-todoke-{{ group }}.sock{% endif %}'
+# gui = true suppresses the transient cmd window on Windows when the
+# handler is a GUI front-end (neovide / nvim-qt). Skip when using plain
+# `nvim` in a separate terminal, which needs the console that the
+# `cmd /c start` wrapper allocates.
+gui = {{ vars.gui in vars.wrapper_guis }}
 
 {% if vars.gui in vars.wrapper_guis %}
 [todoke.gui.args]
@@ -392,6 +402,7 @@ A delivery target (the value behind a rule's `to = "<name>"`).
 | `args`     | table of `<mode>` → `array<string>` | no       | args injected based on `rule.mode`; `args.default` is the fallback when no key matches |
 | `append_inputs` | bool                           | `true`   | `exec` kind only: whether each input's display string is appended as a trailing positional arg after `args`. Set to `false` when `args` already reference the input via `{{ input }}` / `{{ cap.N }}` and you don't want the raw value passed twice. |
 | `env`      | table                               | no       | env vars passed to the spawned handler                          |
+| `gui`      | bool                                | `false`  | Windows only (no-op on Unix): when `true`, detached spawns use `CREATE_NO_WINDOW + DETACHED_PROCESS` instead of `cmd /c start`, so no transient cmd window flashes before the GUI appears. Set to `true` for GUI handlers (`neovide`, `nvim-qt`, `code`, `firefox`, …) and leave `false` for terminal / TUI handlers that need a fresh console (`nvim` in a new window, `helix`, …). |
 
 ### `[[rules]]`
 

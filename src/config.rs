@@ -57,6 +57,17 @@ pub struct Target {
     /// don't want the raw value passed again.
     #[serde(default = "default_true")]
     pub append_inputs: bool,
+    /// Set to `true` when the handler is a **GUI** application (neovide,
+    /// nvim-qt, vscode, firefox, …). On Windows, detached spawns then use
+    /// `CREATE_NO_WINDOW + DETACHED_PROCESS` instead of the default
+    /// `cmd /c start` wrapper, so no transient cmd window flashes before
+    /// the GUI appears. On Unix this flag is a no-op.
+    ///
+    /// Leave unset / `false` for console / TUI handlers (nvim in a terminal,
+    /// helix, bat, …) — those rely on the fresh console window that
+    /// `cmd /c start` allocates.
+    #[serde(default)]
+    pub gui: bool,
 }
 
 fn default_true() -> bool {
