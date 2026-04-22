@@ -62,6 +62,11 @@ pub fn spawn_detached(cmd: &mut Command, gui: bool, _file_for_log: &Path) -> Res
 fn spawn_detached_gui_windows(cmd: &mut Command) -> Result<()> {
     use std::os::windows::process::CommandExt;
 
+    // `creation_flags` overwrites any existing flags wholesale (std doesn't
+    // expose a getter to merge with). Callers inside this crate don't set
+    // creation flags before calling spawn_detached, so this is safe today.
+    // If a future caller needs to preserve other flags, swap this for the
+    // CreateProcessW path directly and OR them in explicitly.
     cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -71,6 +76,12 @@ fn spawn_detached_gui_windows(cmd: &mut Command) -> Result<()> {
     Ok(())
 }
 
+/// TUI / console path. Unlike the GUI path above this does NOT spawn `cmd`
+/// directly; it copies its program / args / cwd / envs onto a fresh
+/// `cmd.exe /c start ""` wrapper and spawns that instead, because `start`
+/// is the only builtin that allocates a new console with correctly-wired
+/// stdio on Windows. The original `cmd` is read-only here — callers that
+/// care about `cmd` state afterwards shouldn't rely on it being mutated.
 #[cfg(windows)]
 fn spawn_detached_console_windows(cmd: &mut Command) -> Result<()> {
     let program = cmd.get_program().to_os_string();
