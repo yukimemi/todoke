@@ -480,12 +480,18 @@ flags the downstream tool expects):
 - `--todoke-dry-run`       — print the resolved plan without executing
 - `--todoke-verbose`       — repeat for more verbosity (info / debug / trace)
 
-Positional args are collected with `allow_hyphen_values = true`, so
-`-c :set ft=md` / `+42` / `-abc` flow straight through to whichever
-passthrough / normal rule matches without needing a `--` separator.
-(clap still consumes the `--` end-of-options marker itself, so if a
+Positional args are collected with `trailing_var_arg = true` +
+`allow_hyphen_values = true`, so `-c :set ft=md` / `+42` / `-abc` flow
+straight through to whichever passthrough / normal rule matches — no
+`--` separator required. Trade-off: **todoke's own flags must precede
+the inputs** (e.g. `todoke --todoke-dry-run +42 foo.txt`); flags
+written after the first input get absorbed as positional. That's the
+right shape for `$EDITOR` callers, who never inject todoke flags
+after inputs.
+
+clap still consumes the `--` end-of-options marker itself, so if a
 downstream tool *requires* a literal `--` in its argv, pass it some
-other way — e.g. a `consumes_rest` rule keyed on a non-`--` sentinel.)
+other way — e.g. a `consumes_rest` rule keyed on a non-`--` sentinel.
 
 Logging is also controllable via `RUST_LOG`.
 

@@ -15,15 +15,24 @@ pub mod config;
     long_about = None,
 )]
 pub struct Cli {
-    // All positional inputs are collected without special treatment for
-    // leading `-` / `+`, so `$EDITOR=todoke`-style invocations like
-    // `todoke -c :set ft=md +42 file.txt` don't need `--` to escape the
-    // flags — they just flow through to whichever passthrough / normal
-    // rule matches. todoke's own options are long-only and `--todoke-`
-    // prefixed to avoid colliding with the flags downstream tools expect.
+    // `trailing_var_arg` is load-bearing: on some platforms (Windows CI)
+    // clap rejects unknown short flags like `-f` even with
+    // `allow_hyphen_values = true` — the flag parser fires first and the
+    // value never reaches the positional collector. `trailing_var_arg`
+    // forces everything after the first positional into this Vec, so
+    // `$EDITOR=todoke`-style invocations (`todoke -c :set ft=md +42 file.txt`)
+    // flow through to whichever passthrough / normal rule matches.
+    //
+    // Trade-off: todoke's own flags must precede inputs.
+    // `todoke --todoke-dry-run +42 file.txt` works; the reverse order
+    // `todoke +42 file.txt --todoke-dry-run` treats the trailing flag
+    // as a positional. That's the right shape for $EDITOR callers
+    // (which never inject todoke flags after inputs) and for the
+    // Quick-start idioms in the README.
     #[arg(
         value_name = "INPUTS",
         help = "Files, URLs, or raw strings to dispatch (no subcommand = default dispatch)",
+        trailing_var_arg = true,
         allow_hyphen_values = true
     )]
     pub files: Vec<PathBuf>,
