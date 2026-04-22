@@ -163,10 +163,22 @@ todoke https://github.com/yukimemi/todoke
 todoke issue:42      # → firefox opens issues/42
 todoke HEAD          # → firefox opens the repo tree at HEAD
 
-# --as picks which classification you want when both are valid. Inside
-# a git worktree `HEAD` resolves as a file (the .git/HEAD pointer),
-# so plain `todoke HEAD` opens the file in nvim. Use --as raw to force
-# the raw string through the gh-ref rule and open the tree URL instead.
+# --as picks which classification you want when both are valid.
+#
+# Inside a git worktree, `HEAD` resolves as a file (the .git/HEAD
+# pointer). todoke then canonicalizes the path and feeds the full
+# absolute form to rule matching, e.g.
+#
+#     /home/you/repo/.git/HEAD
+#
+# A tight anchored regex like `^HEAD$` on the gh-ref rule doesn't hit
+# that — the path is too long. The default catch-all `.*` wins and
+# nvim opens the file. That's a reasonable outcome, just not the
+# "open the GitHub tree URL" one we wanted.
+#
+# Passing `--as raw` skips canonicalization entirely and hands the
+# literal string "HEAD" to rule matching. Now `^HEAD$` hits cleanly
+# and the gh-ref rule fires.
 todoke --as raw HEAD
 
 # See which rule would match, without actually dispatching
@@ -291,7 +303,7 @@ A delivery target (the value behind a rule's `to = "<name>"`).
 | field     | type                      | default      | meaning                                      |
 | --------- | ------------------------- | ------------ | -------------------------------------------- |
 | `name`    | string                    | `rule[N]`    | human-readable label (shown in `check`)      |
-| `match`   | regex string or `[regex]` | required     | pattern(s) against the input; files are normalized to `/` before matching, URLs and raw strings are matched as-is |
+| `match`   | regex string or `[regex]` | required     | pattern(s) matched against a string derived from the input: **file** = canonicalized absolute path with `/` separators (`\\?\` verbatim prefix stripped), **url** = the URL string as-is, **raw** = the argument string as-is. Anchors like `^foo$` only fire for the URL/raw cases unless you design the regex for absolute paths. |
 | `exclude` | regex string or `[regex]` | none         | when any `exclude` hits, the rule is skipped even if `match` hits — todoke falls through to the next rule |
 | `to`      | string (Tera-templated)   | required     | key into `[todoke.*]`                        |
 | `group`   | string                    | `"default"`  | instance identity (one nvim per group)       |
