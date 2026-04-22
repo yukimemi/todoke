@@ -161,10 +161,12 @@ todoke https://github.com/yukimemi/todoke
 
 # Raw strings match rules too. Captures are available as {{ cap.N }}.
 todoke issue:42      # → firefox opens issues/42
+todoke HEAD          # → firefox opens the repo tree at HEAD
 
-# Force interpretation with --as when auto-detection would get it wrong.
-# Example: a file named "HEAD" exists in cwd but you want "HEAD" routed
-# as a raw git-ref string to whatever rule handles refs.
+# --as is only needed when auto-detection would get it wrong — typically
+# when a file of the same name exists in cwd and you want the string
+# routed as raw instead. Example: you're inside a git worktree and
+# `HEAD` resolves as a file, but you want the git-ref rule to win:
 todoke --as raw HEAD
 
 # See which rule would match, without actually dispatching
