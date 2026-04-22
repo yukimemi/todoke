@@ -288,50 +288,23 @@ fn plan_batches(
         }
     }
 
-    // Phase 2: per-input match. Each argv is first tried against
-    // passthrough rules using the RAW string (so `+42` still reads as
-    // `+42`, not as a file path). On no passthrough hit, fall back to the
-    // normal `match_string`-based match on the classified input.
+    // Phase 2: per-input match. Done in two passes so passthrough inputs
+    // can attach to the normal batch that shares their (target, group)
+    // regardless of declaration order in the config.
+    //
+    // 2a: resolve normal rules and build the groups map.
+    // 2b: resolve passthrough rules, preferring merge into an existing
+    //     (target, group) batch over creating a standalone passthrough
+    //     batch. When merging, the existing batch's mode/sync win — a
+    //     mismatch with the passthrough rule's mode/sync is surfaced as
+    //     a runtime warn (doctor can't catch it because group/target are
+    //     Tera templates that only resolve at dispatch time).
     let mut groups: BTreeMap<BatchKey, Batch> = BTreeMap::new();
+    let mut pending_passthrough: Vec<(String, usize, CaptureMap, Input)> = Vec::new();
 
     for (raw, input) in raws.iter().zip(inputs.iter()) {
         if let Some((rule_idx, cap)) = first_passthrough_match(cfg, raw) {
-            let rule = cfg.rule(rule_idx);
-            let rule_name = rule
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("rule[{rule_idx}]"));
-            let ctx = build_context(Context {
-                input: Some(input),
-                command: "",
-                cwd: &cwd,
-                group: "",
-                rule_name: &rule_name,
-                vars: &cfg.raw.vars,
-                cap: &cap,
-            });
-            let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx)?;
-            let target_name = resolve_target_name(cli, rule, &mut tera, &ctx)?;
-            let key = BatchKey {
-                target: target_name.clone(),
-                group: group.clone(),
-                mode: rule.mode.clone(),
-                sync: rule.sync,
-            };
-            let batch = groups.entry(key).or_insert_with(|| Batch {
-                target_name: target_name.clone(),
-                group: group.clone(),
-                mode: rule.mode.clone(),
-                sync: rule.sync,
-                rule_name: rule_name.clone(),
-                inputs: Vec::new(),
-                passthrough_inputs: Vec::new(),
-                cap: cap.clone(),
-            });
-            batch.passthrough_inputs.push(raw.clone());
-            for (k, v) in cap {
-                batch.cap.insert(k, v);
-            }
+            pending_passthrough.push((raw.clone(), rule_idx, cap, input.clone()));
             continue;
         }
 
@@ -382,6 +355,72 @@ fn plan_batches(
             cap: cap.clone(),
         });
         batch.inputs.push(input.clone());
+    }
+
+    // Phase 2b.
+    for (raw, rule_idx, cap, input) in pending_passthrough {
+        let rule = cfg.rule(rule_idx);
+        let rule_name = rule
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("rule[{rule_idx}]"));
+        let ctx = build_context(Context {
+            input: Some(&input),
+            command: "",
+            cwd: &cwd,
+            group: "",
+            rule_name: &rule_name,
+            vars: &cfg.raw.vars,
+            cap: &cap,
+        });
+        let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx)?;
+        let target_name = resolve_target_name(cli, rule, &mut tera, &ctx)?;
+
+        let matching_key = groups
+            .keys()
+            .find(|k| k.target == target_name && k.group == group)
+            .cloned();
+
+        let key = match matching_key {
+            Some(k) => {
+                let batch = groups.get(&k).expect("key came from groups");
+                if batch.mode != rule.mode || batch.sync != rule.sync {
+                    warn!(
+                        rule = %rule_name,
+                        batch_rule = %batch.rule_name,
+                        target = %target_name,
+                        group = %group,
+                        batch_mode = %batch.mode,
+                        batch_sync = batch.sync,
+                        rule_mode = %rule.mode,
+                        rule_sync = rule.sync,
+                        "passthrough rule's mode/sync differs from the batch it's attaching to; batch values win",
+                    );
+                }
+                k
+            }
+            None => BatchKey {
+                target: target_name.clone(),
+                group: group.clone(),
+                mode: rule.mode.clone(),
+                sync: rule.sync,
+            },
+        };
+
+        let batch = groups.entry(key).or_insert_with(|| Batch {
+            target_name: target_name.clone(),
+            group: group.clone(),
+            mode: rule.mode.clone(),
+            sync: rule.sync,
+            rule_name: rule_name.clone(),
+            inputs: Vec::new(),
+            passthrough_inputs: Vec::new(),
+            cap: cap.clone(),
+        });
+        batch.passthrough_inputs.push(raw);
+        for (k, v) in cap {
+            batch.cap.insert(k, v);
+        }
     }
 
     Ok(groups.into_values().collect())
@@ -443,7 +482,7 @@ fn build_joined_batch(
     }])
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct BatchKey {
     target: String,
     group: String,

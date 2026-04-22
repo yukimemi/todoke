@@ -278,6 +278,13 @@ sync = true
 (multi-file still works, `+42` rides along as a flag). A separate
 `-c :set ...` rule can be added the same way.
 
+Passthrough inputs are merged into the **normal rule's batch** that
+shares the same `(target, group)` — so a passthrough rule's `mode` /
+`sync` are only used when no normal rule routes to the same
+target+group. On a merge the normal rule's values win and a runtime
+warn is emitted if they differ (doctor can't catch it because
+`group` / `to` are Tera templates that only resolve at dispatch).
+
 **Option B — `joined`** (flexible; one rule captures the whole argv):
 
 ```toml
