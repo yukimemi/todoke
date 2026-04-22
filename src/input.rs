@@ -21,6 +21,37 @@ pub fn looks_like_url(s: &str) -> bool {
     url_scheme_re().is_match(s)
 }
 
+/// Heuristic: does this arg read as a filesystem path even when the file
+/// doesn't exist on disk yet? Used by the auto-detector so `$EDITOR`-style
+/// "create a new file" invocations still classify as [`Input::File`].
+///
+/// Triggers on:
+/// - a path separator (`/` or `\`)
+/// - a leading `.` or `~` (relative / home)
+/// - a Windows drive letter (`C:` / `D:` / …)
+/// - a trailing extension-like suffix (`.<alnum>+`)
+pub fn looks_like_path(s: &str) -> bool {
+    if s.contains('/') || s.contains('\\') {
+        return true;
+    }
+    if s.starts_with('.') || s.starts_with('~') {
+        return true;
+    }
+    let mut ch = s.chars();
+    if let (Some(first), Some(second)) = (ch.next(), ch.next()) {
+        if first.is_ascii_alphabetic() && second == ':' {
+            return true;
+        }
+    }
+    if let Some(dot) = s.rfind('.') {
+        let ext = &s[dot + 1..];
+        if !ext.is_empty() && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return true;
+        }
+    }
+    false
+}
+
 #[derive(Debug, Clone)]
 pub enum Input {
     File(PathBuf),
@@ -68,10 +99,16 @@ impl Input {
                     let u = url::Url::parse(raw).with_context(|| format!("invalid URL: {raw}"))?;
                     return Ok(Input::Url(u));
                 }
-                match PathBuf::from(raw).canonicalize() {
-                    Ok(p) => Ok(Input::File(p)),
-                    Err(_) => Ok(Input::Raw(raw.to_string())),
+                if let Ok(p) = PathBuf::from(raw).canonicalize() {
+                    return Ok(Input::File(p));
                 }
+                // Nonexistent but path-shaped: `$EDITOR=todoke newfile.txt`
+                // should still dispatch as a file so the editor can create it.
+                if looks_like_path(raw) {
+                    let abs = std::path::absolute(raw).unwrap_or_else(|_| PathBuf::from(raw));
+                    return Ok(Input::File(abs));
+                }
+                Ok(Input::Raw(raw.to_string()))
             }
         }
     }
@@ -146,11 +183,47 @@ mod tests {
 
     #[test]
     fn raw_fallback_when_not_url_or_file() {
-        // A clearly non-existent path that isn't a URL falls through to Raw.
+        // A clearly non-existent bare word that isn't a URL falls to Raw.
         let i = Input::from_arg("issue:1234").unwrap();
         assert!(matches!(i, Input::Raw(_)));
         assert_eq!(i.kind_label(), "raw");
         assert_eq!(i.match_string(), "issue:1234");
+    }
+
+    #[test]
+    fn nonexistent_path_like_args_still_classify_as_file() {
+        // $EDITOR new-file use case: the file doesn't exist yet but the
+        // arg is clearly a path, so we keep it as Input::File.
+        let i = Input::from_arg("/tmp/does-not-exist-todoke-test.md").unwrap();
+        assert!(matches!(i, Input::File(_)));
+
+        let i = Input::from_arg("newfile.txt").unwrap();
+        assert!(matches!(i, Input::File(_)));
+
+        let i = Input::from_arg("./relative-new.log").unwrap();
+        assert!(matches!(i, Input::File(_)));
+    }
+
+    #[test]
+    fn bare_wordy_strings_stay_raw() {
+        // Things without any path markers stay in Raw land.
+        for s in ["HEAD", "main", "some-bare-word"] {
+            let i = Input::from_arg(s).unwrap();
+            assert!(matches!(i, Input::Raw(_)), "{s} should be Raw");
+        }
+    }
+
+    #[test]
+    fn looks_like_path_cases() {
+        assert!(looks_like_path("/abs/path"));
+        assert!(looks_like_path(".\\win\\style"));
+        assert!(looks_like_path("./rel"));
+        assert!(looks_like_path("~/home"));
+        assert!(looks_like_path("C:/Users/x"));
+        assert!(looks_like_path("Cargo.toml"));
+        assert!(!looks_like_path("HEAD"));
+        assert!(!looks_like_path("issue:42"));
+        assert!(!looks_like_path("Makefile"));
     }
 
     #[test]

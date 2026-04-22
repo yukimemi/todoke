@@ -126,8 +126,9 @@ match = '/src/company/'
 to = "code"
 mode = "remote"
 
-# Raw strings (neither URL nor existing file) also fall through to rules —
-# capture groups are available to the handler as `{{ cap.1 }}` / `{{ cap.name }}`.
+# Raw strings (not a URL, not an existing file, and not path-shaped) also
+# fall through to rules — capture groups are available to the handler as
+# `{{ cap.1 }}` / `{{ cap.name }}`.
 [[rules]]
 name = "gh-issue"
 match = '^issue:(\d+)$'
@@ -266,6 +267,11 @@ git commit      # → todoke routes COMMIT_EDITMSG to nvim mode=new sync=true
 
 The bundled default config is compatible with every `$EDITOR=…` caller I
 know of (git, crontab, visudo, fc, mutt, …).
+
+Nonexistent-but-path-shaped args (`newfile.txt`, `./foo.log`,
+`/tmp/new.md`, `C:\scratch\x.txt`) classify as `file`, so
+`todoke newfile.txt` works the same as `vim newfile.txt` — rules match
+against the absolute form and the editor creates the file on write.
 
 ### As OS default program (Windows)
 
