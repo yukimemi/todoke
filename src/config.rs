@@ -663,6 +663,23 @@ mod tests {
         assert!(!cfg.raw.rules[0].sync);
         assert!(cfg.raw.rules[0].group.is_none());
         assert_eq!(cfg.raw.todoke["a"].kind, TargetKind::Exec);
+        // gui is a new public field; lock in the backward-compatible default.
+        assert!(!cfg.raw.todoke["a"].gui);
+    }
+
+    #[test]
+    fn target_gui_parses_true() {
+        let text = r#"
+            [todoke.a]
+            command = "neovide"
+            gui = true
+
+            [[rules]]
+            match = ".*"
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        assert!(cfg.raw.todoke["a"].gui);
     }
 
     #[test]
