@@ -83,6 +83,199 @@ fn no_args_uses_default_rule() {
 }
 
 #[test]
+fn gnu_posix_argument_syntax_parses_end_to_end() {
+    // Covers the major shapes from POSIX Utility Syntax Guidelines +
+    // GNU Argument Syntax:
+    //   - short flag `-f`                (single flag)
+    //   - long flag `--flag`             (single flag)
+    //   - long w/ `=value` `--key=val`   (one argv)
+    //   - short concatenated `-sfoo`     (one argv, POSIX option-arg)
+    //   - bundled shorts `-abc`          (one argv)
+    //   - vim/ed-style `+N`              (POSIX ex-editor convention)
+    //   - short spaced `-s val`          (two argv, consumes = 1)
+    //   - long spaced `--long val`       (two argv, consumes = 1)
+    //   - variadic `-p a b c`            (consumes_until)
+    //   - GNU separator `-- x y`         (consumes_rest)
+    //   - positional file                (file input)
+    //   - stdin marker `-`               (passthrough)
+    //
+    // The rule set uses match regexes anchored to full argv, so every
+    // pattern lands in exactly one rule.
+
+    let dir = temp_dir();
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        r#"
+            [todoke.echo]
+            command = "echo"
+
+            # POSIX short flag with spaced value (fixed 1)
+            [[rules]]
+            name = "short-spaced"
+            match = '^-s$'
+            to = "echo"
+            passthrough = true
+            consumes = 1
+
+            # GNU long flag with spaced value (fixed 1)
+            [[rules]]
+            name = "long-spaced"
+            match = '^--long$'
+            to = "echo"
+            passthrough = true
+            consumes = 1
+
+            # Variadic flag: consume argv until the next flag
+            [[rules]]
+            name = "variadic"
+            match = '^-p$'
+            to = "echo"
+            passthrough = true
+            consumes_until = '^[-+]'
+
+            # GNU separator: everything after `--` is for the target
+            [[rules]]
+            name = "gnu-separator"
+            match = '^--$'
+            to = "echo"
+            passthrough = true
+            consumes_rest = true
+
+            # Any other flag-shaped argv (short/long/bundled/concatenated/plus/stdin-dash)
+            [[rules]]
+            name = "any-flag"
+            match = '^[-+]'
+            to = "echo"
+            passthrough = true
+
+            # Default: positional files
+            [[rules]]
+            name = "default"
+            match = '.*'
+            to = "echo"
+        "#,
+    );
+
+    let cfg_str = config.to_string_lossy().into_owned();
+
+    let run_dry = |extra: &[&str]| -> String {
+        let mut args: Vec<&str> = vec!["--config", &cfg_str, "--dry-run", "--"];
+        args.extend_from_slice(extra);
+        let (ok, out, err) = run_with(&args);
+        assert!(ok, "failed for {extra:?}: stderr: {err}");
+        out
+    };
+
+    struct Case<'a> {
+        label: &'a str,
+        args: &'a [&'a str],
+        expect_passthrough: &'a [&'a str],
+        expect_file_contains: &'a [&'a str],
+    }
+
+    let cases = [
+        Case {
+            label: "POSIX short flag",
+            args: &["-f"],
+            expect_passthrough: &["-f"],
+            expect_file_contains: &[],
+        },
+        Case {
+            label: "GNU long flag",
+            args: &["--flag"],
+            expect_passthrough: &["--flag"],
+            expect_file_contains: &[],
+        },
+        Case {
+            label: "GNU long=value",
+            args: &["--key=val"],
+            expect_passthrough: &["--key=val"],
+            expect_file_contains: &[],
+        },
+        Case {
+            label: "POSIX short concatenated (-sfoo)",
+            args: &["-sfoo"],
+            expect_passthrough: &["-sfoo"],
+            expect_file_contains: &[],
+        },
+        Case {
+            label: "POSIX bundled shorts (-abc)",
+            args: &["-abc"],
+            expect_passthrough: &["-abc"],
+            expect_file_contains: &[],
+        },
+        Case {
+            label: "ex-editor plus flag (+42)",
+            args: &["+42"],
+            expect_passthrough: &["+42"],
+            expect_file_contains: &[],
+        },
+        Case {
+            label: "POSIX short spaced (-s val)",
+            args: &["-s", "val"],
+            expect_passthrough: &["-s", "val"],
+            expect_file_contains: &[],
+        },
+        Case {
+            label: "GNU long spaced (--long val)",
+            args: &["--long", "val"],
+            expect_passthrough: &["--long", "val"],
+            expect_file_contains: &[],
+        },
+        Case {
+            label: "variadic (-p a b c)",
+            args: &["-p", "a", "b", "c"],
+            expect_passthrough: &["-p", "a", "b", "c"],
+            expect_file_contains: &[],
+        },
+        Case {
+            label: "GNU separator (-- x y)",
+            args: &["--", "x", "y"],
+            expect_passthrough: &["--", "x", "y"],
+            expect_file_contains: &[],
+        },
+        Case {
+            label: "positional file",
+            args: &["some-nonexistent-file.txt"],
+            expect_passthrough: &[],
+            expect_file_contains: &["some-nonexistent-file.txt"],
+        },
+        Case {
+            label: "stdin marker (-)",
+            args: &["-"],
+            expect_passthrough: &["-"],
+            expect_file_contains: &[],
+        },
+        Case {
+            label: "mixed (-s val -p a b -- z)",
+            args: &["-s", "val", "-p", "a", "b", "--", "z"],
+            expect_passthrough: &["-s", "val", "-p", "a", "b", "--", "z"],
+            expect_file_contains: &[],
+        },
+    ];
+
+    for case in &cases {
+        let out = run_dry(case.args);
+        for p in case.expect_passthrough {
+            let needle = format!("[passthrough] {p}");
+            assert!(
+                out.contains(&needle),
+                "{}: expected {needle:?} in plan\n--- plan ---\n{out}",
+                case.label,
+            );
+        }
+        for f in case.expect_file_contains {
+            assert!(
+                out.contains("[file]") && out.contains(f),
+                "{}: expected [file] + {f:?} in plan\n--- plan ---\n{out}",
+                case.label,
+            );
+        }
+    }
+}
+
+#[test]
 fn no_args_no_rules_errors() {
     let dir = temp_dir();
     let config = dir.join("todoke.toml");
