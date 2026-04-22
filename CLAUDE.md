@@ -42,19 +42,25 @@ Name comes from 届け (todoke, "deliver"), successor to `edtr` / `hitori.vim`.
   open / create them. Rules that want `Raw` semantics must opt in with
   `input_type = "raw"`.
 - **Rule matching runs in three phases.** Joined first (regex against
-  space-joined argv), then per-argv normal (input's `match_string`),
-  then passthrough (second pass that attaches to existing
-  `(target, group)` batches — see `dispatcher.rs:plan_batches`).
+  space-joined argv), then per-argv (where **passthrough rules are
+  tried before normal rules** for each argv, so `first_passthrough_match`
+  wins over `first_match` when both would hit), then a passthrough
+  attachment pass that merges passthrough hits into the existing
+  `(target, group)` batch — see `dispatcher.rs:plan_batches`.
 - **`joined` and `passthrough` are mutually exclusive.** Config
   rejects rules that set both. There's an open issue (#22) for an
   "extract" mode that would combine them, parked until a real config
   needs it.
 - **`consumes` / `consumes_until` / `consumes_rest` are exclusive.**
-  Exactly one may be set per passthrough rule.
-- **Tera pre-renders the TOML twice.** First pass extracts `[vars]` by
-  line-scan; second pass renders the whole file. Dispatch-time tokens
-  (`{{ file_path }}`, `{{ group }}`, etc.) round-trip as
-  self-referential strings so they survive pre-render intact.
+  At most one may be set per passthrough rule (setting two or more is
+  a compile error; setting none is fine — the rule then just
+  passthroughs the single matched argv).
+- **The TOML is pre-rendered in two passes.** The first pass is a
+  manual line-scan in `extract_vars` to populate `[vars]` into the
+  Tera context; the second pass is a single Tera render of the whole
+  file with that context. Dispatch-time tokens (`{{ file_path }}`,
+  `{{ group }}`, etc.) round-trip as self-referential strings so they
+  survive pre-render intact.
 - **`neovim` backend rejects non-file inputs.** URL / Raw inputs are
   warned and skipped — that's why non-GitHub URL rules need an
   `input_type = "url"` browser fallback.
