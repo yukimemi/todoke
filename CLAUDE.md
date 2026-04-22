@@ -100,6 +100,11 @@ locked build). A pre-push hook invokes it automatically.
 - **No direct pushes to `main`.** Open a PR instead.
   - Exception: trivial typo fixes, whitespace-only commits,
     documentation wording tweaks. When in doubt, PR it.
+  - Exception: **release version bumps.** A standalone
+    `Cargo.toml` version bump (plus the `cargo check` lockfile
+    refresh and the `git tag vX.Y.Z && git push origin vX.Y.Z`
+    that follows) is also fine on `main` directly — a PR for a
+    one-line bump is more noise than signal.
 - Every PR triggers **Gemini Code Assist** and **CodeRabbit** reviews.
   Wait for both to post, address their comments (push fixes to the PR
   branch), and only merge once the feedback is resolved.
@@ -118,6 +123,9 @@ locked build). A pre-push hook invokes it automatically.
   Acknowledgement-only replies from a bot ("Understood", "Thank you")
   count as a quiet pass for that thread. New actionable findings
   restart the loop.
+- **Exception: bot-authored PRs (Renovate, Dependabot).** Gemini and
+  CodeRabbit skip them by default, so the "wait for bot review" gate
+  doesn't apply. Merge as long as CI is green and the owner approves.
 - Tag-based releases: `git tag vX.Y.Z && git push origin vX.Y.Z`
   triggers the GitHub Actions release workflow.
 
