@@ -144,7 +144,16 @@ match = '^(HEAD|main|master|develop|v?\d+\.\d+\.\d+|[0-9a-f]{7,40})$'
 to = "gh-ref"
 input_type = "raw"
 
-# Default: everything else goes to the shared nvim.
+# URL fallback: any other URL → browser. Without this, non-GitHub URLs
+# would fall through to the file default (nvim) and get dropped by the
+# neovim backend (which only accepts files).
+[[rules]]
+name = "url-default"
+match = '^https?://'
+input_type = "url"
+to = "firefox"
+
+# Default: everything else (file inputs, mostly) goes to the shared nvim.
 [[rules]]
 name = "default"
 match = '.*'
@@ -161,7 +170,8 @@ todoke notes.md
 
 # URLs work too — same rule engine routes them to a browser, a browser
 # profile, or any CLI that accepts URLs.
-todoke https://github.com/yukimemi/todoke
+todoke https://github.com/yukimemi/todoke  # → gh rule → firefox
+todoke https://example.com                  # → url-default rule → firefox
 
 # Raw strings match rules too. `<scheme>:<body>` bare ids auto-detect as
 # Raw so gh-issue fires without `--as`. Captures are available as
