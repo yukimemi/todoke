@@ -114,7 +114,7 @@ to = "code"
 mode = "remote"
 
 # Raw strings — custom-scheme bare ids like `issue:42` auto-detect as Raw
-# so this rule fires without `--as`. Capture groups are available to the
+# so this rule fires without `--todoke-as`. Capture groups are available to the
 # handler as `{{ cap.1 }}` / `{{ cap.name }}`.
 [[rules]]
 name = "gh-issue"
@@ -161,7 +161,7 @@ todoke https://github.com/yukimemi/todoke  # → gh rule → firefox
 todoke https://example.com                  # → url-default rule → firefox
 
 # Raw strings match rules too. `<scheme>:<body>` bare ids auto-detect as
-# Raw so gh-issue fires without `--as`. Captures are available as
+# Raw so gh-issue fires without `--todoke-as`. Captures are available as
 # `{{ cap.N }}`.
 todoke issue:42      # → firefox opens issues/42
 
