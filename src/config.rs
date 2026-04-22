@@ -148,6 +148,23 @@ pub struct Rule {
     /// strings reach the target's start-up command line intact.
     #[serde(default)]
     pub consumes: usize,
+    /// Regex. When set, `-p a.txt b.txt c.txt` style multi-value flags
+    /// can be absorbed wholesale: the passthrough rule matches `-p`,
+    /// then todoke keeps eating argv until one matches this regex
+    /// (or argv ends). The stopper argv itself is NOT consumed.
+    ///
+    /// Typical values: `'^[-+]'` (stop at next flag), `'^--$'` (stop at
+    /// GNU separator). Mutually exclusive with `consumes` and
+    /// `consumes_rest`; only valid when `passthrough = true`.
+    #[serde(default)]
+    pub consumes_until: Option<String>,
+    /// Consume every remaining argv as part of this passthrough. Useful
+    /// for "trailing args are all for this target" patterns.
+    ///
+    /// Mutually exclusive with `consumes` and `consumes_until`; only
+    /// valid when `passthrough = true`.
+    #[serde(default)]
+    pub consumes_rest: bool,
 }
 
 /// One or many [`InputKind`]s — mirrors [`StringOrVec`] so TOML users can
@@ -203,6 +220,9 @@ pub struct ResolvedConfig {
     /// Parallel to [`Self::rule_regexes`]. Empty Vec for rules without an
     /// `exclude` clause.
     pub rule_excludes: Vec<Vec<Regex>>,
+    /// Parallel to [`Self::rule_regexes`]. `Some` when the rule has
+    /// `consumes_until`, else `None`.
+    pub rule_consumes_until: Vec<Option<Regex>>,
 }
 
 impl ResolvedConfig {
@@ -229,11 +249,19 @@ impl ResolvedConfig {
                     rule.name.as_deref().unwrap_or("<unnamed>"),
                 ));
             }
-            if rule.consumes > 0 && !rule.passthrough {
+            let consumes_forms = (rule.consumes > 0) as u8
+                + rule.consumes_until.is_some() as u8
+                + rule.consumes_rest as u8;
+            if consumes_forms > 1 {
                 return Err(anyhow!(
-                    "rule[{i}] ({}) has consumes = {} but passthrough = false — consumes only applies to passthrough rules",
+                    "rule[{i}] ({}) sets more than one of consumes / consumes_until / consumes_rest — pick exactly one",
                     rule.name.as_deref().unwrap_or("<unnamed>"),
-                    rule.consumes,
+                ));
+            }
+            if consumes_forms > 0 && !rule.passthrough {
+                return Err(anyhow!(
+                    "rule[{i}] ({}) has consumes* set but passthrough = false — consume options only apply to passthrough rules",
+                    rule.name.as_deref().unwrap_or("<unnamed>"),
                 ));
             }
             if is_template(&rule.to) {
@@ -286,10 +314,23 @@ impl ResolvedConfig {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let rule_consumes_until = raw
+            .rules
+            .iter()
+            .enumerate()
+            .map(|(i, rule)| match &rule.consumes_until {
+                None => Ok(None),
+                Some(p) => Regex::new(p)
+                    .map(Some)
+                    .with_context(|| format!("rule[{i}]: failed to compile consumes_until '{p}'")),
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         Ok(Self {
             raw,
             rule_regexes,
             rule_excludes,
+            rule_consumes_until,
         })
     }
 }
@@ -512,6 +553,57 @@ mod tests {
     }
 
     #[test]
+    fn rejects_multiple_consume_forms() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = '.*'
+            to = "a"
+            passthrough = true
+            consumes = 1
+            consumes_rest = true
+        "#;
+        let err = load_from_str(text).unwrap_err();
+        assert!(err.to_string().contains("pick exactly one"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_consumes_until_without_passthrough() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = '.*'
+            to = "a"
+            consumes_until = '^[-+]'
+        "#;
+        let err = load_from_str(text).unwrap_err();
+        assert!(
+            err.to_string().contains("consume options only apply"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_consumes_until_regex() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = '.*'
+            to = "a"
+            passthrough = true
+            consumes_until = '[unterminated'
+        "#;
+        let err = load_from_str(text).unwrap_err();
+        assert!(err.to_string().contains("consumes_until"), "got: {err}");
+    }
+
+    #[test]
     fn rejects_consumes_without_passthrough() {
         let text = r#"
             [todoke.a]
@@ -524,8 +616,7 @@ mod tests {
         "#;
         let err = load_from_str(text).unwrap_err();
         assert!(
-            err.to_string()
-                .contains("consumes only applies to passthrough"),
+            err.to_string().contains("consume options only apply"),
             "got: {err}"
         );
     }

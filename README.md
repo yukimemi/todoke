@@ -299,6 +299,35 @@ passthrough = true
 consumes = 1       # `-c` + next argv both forwarded as passthrough
 ```
 
+For open-ended multi-value flags like `nvim -p a.txt b.txt c.txt` (tab
+open) or `-o` / `-O` (splits), use `consumes_until`:
+
+```toml
+[[rules]]
+name = "nvim-p"
+match = '^-[pOo]$'
+to = "nvim-term"
+sync = true
+passthrough = true
+consumes_until = '^[-+]'    # keep eating argv until the next flag
+```
+
+And for the GNU-style `--` separator that means "everything after me is
+for the target", use `consumes_rest`:
+
+```toml
+[[rules]]
+name = "nvim-passthrough-rest"
+match = '^--$'
+to = "nvim-term"
+sync = true
+passthrough = true
+consumes_rest = true
+```
+
+Exactly one of `consumes` / `consumes_until` / `consumes_rest` may be
+set per rule (compile-time error otherwise).
+
 Passthrough inputs are merged into the **normal rule's batch** that
 shares the same `(target, group)` — so a passthrough rule's `mode` /
 `sync` are only used when no normal rule routes to the same
@@ -392,6 +421,8 @@ A delivery target (the value behind a rule's `to = "<name>"`).
 | `joined`   | bool                       | `false`     | match against the full argv-join (all positional args concatenated with spaces, **pre auto-detect**) instead of each input individually. On a hit, the named capture `input` is re-classified via `Input::from_arg` and becomes the batch's sole input; other captures ride along in `{{ cap.<name> }}` for the target's args templates. Designed for `$EDITOR=todoke +42 file.txt` style calls. Mutually exclusive with `passthrough`. |
 | `passthrough` | bool                    | `false`     | match against the **raw argv** (pre auto-detect) per input. On a hit, the raw string is forwarded to the target's start-up argv instead of being opened/edited. Use for editor flags like `+42` / `-c :set ft=...`. Mutually exclusive with `joined`. |
 | `consumes` | non-negative int           | `0`         | only valid with `passthrough = true`. When the rule matches, also forward the next **N** argv items as part of the same passthrough sequence. Designed for spaced-value flags like `-c :set ft=md` where the value is its own argv — a `consumes = 1` on `match = '^-c$'` keeps the flag and its value together. |
+| `consumes_until` | regex string          | none        | only valid with `passthrough = true`. On match, keep absorbing argv until one matches this regex (or argv ends). The stopper argv itself is NOT consumed. Typical values: `'^[-+]'` (stop at next flag), `'^--$'` (stop at GNU separator). Designed for multi-value flags like `nvim -p a.txt b.txt c.txt`. |
+| `consumes_rest` | bool                   | `false`     | only valid with `passthrough = true`. Consume every remaining argv as part of this passthrough. For "trailing args all go to this target" patterns, often paired with `match = '^--$'`. |
 
 ### Template context
 

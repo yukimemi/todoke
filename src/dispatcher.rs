@@ -310,21 +310,36 @@ fn plan_batches(
         let input = &inputs[idx];
 
         if let Some((rule_idx, cap)) = first_passthrough_match(cfg, raw) {
-            let consumes = cfg.rule(rule_idx).consumes;
+            let rule = cfg.rule(rule_idx);
             let mut consumed = vec![raw.clone()];
-            for k in 1..=consumes {
-                let take = idx + k;
-                if take >= raws.len() {
-                    warn!(
-                        rule_idx,
-                        consumes,
-                        available = raws.len() - idx - 1,
-                        "passthrough rule wanted to consume more argv than remain; taking what's left",
-                    );
-                    break;
+
+            if rule.consumes_rest {
+                for r in raws.iter().skip(idx + 1) {
+                    consumed.push(r.clone());
                 }
-                consumed.push(raws[take].clone());
+            } else if let Some(stopper) = &cfg.rule_consumes_until[rule_idx] {
+                for r in raws.iter().skip(idx + 1) {
+                    if stopper.is_match(r) {
+                        break;
+                    }
+                    consumed.push(r.clone());
+                }
+            } else if rule.consumes > 0 {
+                for k in 1..=rule.consumes {
+                    let take = idx + k;
+                    if take >= raws.len() {
+                        warn!(
+                            rule_idx,
+                            consumes = rule.consumes,
+                            available = raws.len() - idx - 1,
+                            "passthrough rule wanted to consume more argv than remain; taking what's left",
+                        );
+                        break;
+                    }
+                    consumed.push(raws[take].clone());
+                }
             }
+
             let advance = consumed.len();
             pending_passthrough.push((consumed, rule_idx, cap, input.clone()));
             idx += advance;
