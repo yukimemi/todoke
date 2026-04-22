@@ -16,6 +16,8 @@ use directories::BaseDirs;
 use regex::Regex;
 use serde::Deserialize;
 
+use crate::input::InputKind;
+
 pub const DEFAULT_CONFIG_TOML: &str = include_str!("../assets/default.toml");
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -105,6 +107,33 @@ pub struct Rule {
     pub mode: String,
     #[serde(default)]
     pub sync: bool,
+    /// Restrict which [`crate::input::InputKind`]s this rule can match.
+    /// Accepts a single kind (`"file"`) or an array (`["file", "raw"]`).
+    /// Omitted = no restriction (all kinds allowed).
+    ///
+    /// Needed because auto-detection treats bare words like `HEAD` / `main`
+    /// as files — a rule that wants to handle those as git refs should set
+    /// `input_type = "raw"` so it only fires for `--as raw HEAD`.
+    #[serde(default)]
+    pub input_type: Option<InputTypes>,
+}
+
+/// One or many [`InputKind`]s — mirrors [`StringOrVec`] so TOML users can
+/// write `input_type = "raw"` or `input_type = ["file", "raw"]`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum InputTypes {
+    One(InputKind),
+    Many(Vec<InputKind>),
+}
+
+impl InputTypes {
+    pub fn contains(&self, kind: InputKind) -> bool {
+        match self {
+            InputTypes::One(k) => *k == kind,
+            InputTypes::Many(v) => v.contains(&kind),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

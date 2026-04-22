@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::config::ResolvedConfig;
+use crate::input::InputKind;
 
 /// Ordered map of capture name → captured text. Numbered groups use string
 /// keys `"0"`, `"1"`, ...; named groups use their declared name. The full
@@ -63,10 +64,25 @@ pub fn vim_path(p: &Path) -> String {
 /// patterns hits. The subject is whatever string form the caller chose
 /// (normalized file path, raw URL, raw string) — see [`crate::input::Input`].
 ///
+/// When `kind` is `Some(k)`, rules with an `input_type` clause that does not
+/// include `k` are skipped even if their patterns would match. `None` means
+/// "don't filter by kind" (used by the no-args / empty-subject path).
+///
 /// Returns the matching rule's index plus the [`CaptureMap`] extracted from
 /// the specific match regex that hit (empty map when nothing captured).
-pub fn first_match(cfg: &ResolvedConfig, subject: &str) -> Option<(usize, CaptureMap)> {
+pub fn first_match(
+    cfg: &ResolvedConfig,
+    subject: &str,
+    kind: Option<InputKind>,
+) -> Option<(usize, CaptureMap)> {
     for (i, regexes) in cfg.rule_regexes.iter().enumerate() {
+        if let Some(k) = kind {
+            if let Some(allowed) = &cfg.raw.rules[i].input_type {
+                if !allowed.contains(k) {
+                    continue;
+                }
+            }
+        }
         let hit = regexes
             .iter()
             .find_map(|re| re.captures(subject).map(|c| (re, c)));
@@ -96,7 +112,7 @@ pub fn first_match(cfg: &ResolvedConfig, subject: &str) -> Option<(usize, Captur
 /// Shorter form for callers that don't want captures.
 #[allow(dead_code)]
 pub fn first_match_idx(cfg: &ResolvedConfig, subject: &str) -> Option<usize> {
-    first_match(cfg, subject).map(|(i, _)| i)
+    first_match(cfg, subject, None).map(|(i, _)| i)
 }
 
 #[cfg(test)]
@@ -295,7 +311,7 @@ mod tests {
             to = "a"
         "#;
         let cfg = load_from_str(text).unwrap();
-        let (idx, caps) = first_match(&cfg, "gh:yukimemi/todoke").unwrap();
+        let (idx, caps) = first_match(&cfg, "gh:yukimemi/todoke", None).unwrap();
         assert_eq!(idx, 0);
         assert_eq!(
             caps.get("0").map(String::as_str),
@@ -316,10 +332,63 @@ mod tests {
             to = "a"
         "#;
         let cfg = load_from_str(text).unwrap();
-        let (_, caps) = first_match(&cfg, "JIRA-4321").unwrap();
+        let (_, caps) = first_match(&cfg, "JIRA-4321", None).unwrap();
         assert_eq!(caps.get("id").map(String::as_str), Some("4321"));
         // Numbered access still works alongside names.
         assert_eq!(caps.get("1").map(String::as_str), Some("4321"));
+    }
+
+    #[test]
+    fn input_type_filter_skips_non_matching_kinds() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            name = "raw-only"
+            match = '^HEAD$'
+            to = "a"
+            input_type = "raw"
+
+            [[rules]]
+            name = "fallback"
+            match = '.*'
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        // With kind=File, the raw-only rule is skipped and the catch-all wins.
+        assert_eq!(
+            first_match(&cfg, "HEAD", Some(InputKind::File)).map(|(i, _)| i),
+            Some(1),
+        );
+        // With kind=Raw, the specific rule fires.
+        assert_eq!(
+            first_match(&cfg, "HEAD", Some(InputKind::Raw)).map(|(i, _)| i),
+            Some(0),
+        );
+    }
+
+    #[test]
+    fn input_type_array_accepts_any_listed_kind() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = '.*'
+            to = "a"
+            input_type = ["file", "raw"]
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        assert_eq!(
+            first_match(&cfg, "x", Some(InputKind::File)).map(|(i, _)| i),
+            Some(0),
+        );
+        assert_eq!(
+            first_match(&cfg, "x", Some(InputKind::Raw)).map(|(i, _)| i),
+            Some(0),
+        );
+        assert!(first_match(&cfg, "x", Some(InputKind::Url)).is_none());
     }
 
     #[test]
@@ -333,7 +402,7 @@ mod tests {
             to = "a"
         "#;
         let cfg = load_from_str(text).unwrap();
-        let (_, caps) = first_match(&cfg, "anything").unwrap();
+        let (_, caps) = first_match(&cfg, "anything", None).unwrap();
         // Full match still at "0".
         assert_eq!(caps.get("0").map(String::as_str), Some("anything"));
         // No other keys.

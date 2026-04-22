@@ -12,7 +12,7 @@ use crate::backends::{
 };
 use crate::cli::Cli;
 use crate::config::{self, ResolvedConfig, Rule, Target, TargetKind};
-use crate::input::Input;
+use crate::input::{Input, InputKind};
 use crate::matcher::{CaptureMap, first_match};
 use crate::style::{
     accent, bold, dim, level_error, level_info, level_ok, level_warn, muted, styled,
@@ -203,7 +203,7 @@ fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
         .to_string_lossy()
         .into_owned();
 
-    let hit = first_match(cfg, "");
+    let hit = first_match(cfg, "", None);
     let (rule_idx, cap) = match hit {
         Some((i, c)) => (Some(i), c),
         None => {
@@ -261,8 +261,9 @@ fn plan_batches(cli: &Cli, cfg: &ResolvedConfig, inputs: &[Input]) -> Result<Vec
 
     for input in inputs {
         let subject = input.match_string();
+        let kind = input.kind();
 
-        let (rule_idx, rule, cap) = match resolve_rule(cli, cfg, &subject)? {
+        let (rule_idx, rule, cap) = match resolve_rule(cli, cfg, &subject, kind)? {
             Some(tuple) => tuple,
             None => {
                 warn!(subject = %subject, "no rule matched, skipping");
@@ -325,6 +326,7 @@ fn resolve_rule<'a>(
     cli: &Cli,
     cfg: &'a ResolvedConfig,
     subject: &str,
+    kind: InputKind,
 ) -> Result<Option<(usize, &'a Rule, CaptureMap)>> {
     if cli.editor.is_some() || cli.group.is_some() {
         if cfg.raw.rules.is_empty() {
@@ -332,12 +334,12 @@ fn resolve_rule<'a>(
                 "--editor/--group requires at least one [[rules]] in config for mode/sync defaults"
             );
         }
-        if let Some((idx, cap)) = first_match(cfg, subject) {
+        if let Some((idx, cap)) = first_match(cfg, subject, Some(kind)) {
             return Ok(Some((idx, cfg.rule(idx), cap)));
         }
         return Ok(Some((0, cfg.rule(0), CaptureMap::new())));
     }
-    Ok(first_match(cfg, subject).map(|(idx, cap)| (idx, cfg.rule(idx), cap)))
+    Ok(first_match(cfg, subject, Some(kind)).map(|(idx, cap)| (idx, cfg.rule(idx), cap)))
 }
 
 fn resolve_group_with_ctx(

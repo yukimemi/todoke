@@ -21,35 +21,31 @@ pub fn looks_like_url(s: &str) -> bool {
     url_scheme_re().is_match(s)
 }
 
-/// Heuristic: does this arg read as a filesystem path even when the file
-/// doesn't exist on disk yet? Used by the auto-detector so `$EDITOR`-style
-/// "create a new file" invocations still classify as [`Input::File`].
+/// Custom-scheme identifier like `issue:42`, `gh:owner/repo`, `jira:ABC-1`.
+/// Used by the auto-detector to route these to [`Input::Raw`] so rules can
+/// match their scheme prefix.
 ///
-/// Triggers on:
-/// - a path separator (`/` or `\`)
-/// - a leading `.` or `~` (relative / home)
-/// - a Windows drive letter (`C:` / `D:` / …)
-/// - a trailing extension-like suffix (`.<alnum>+`)
-pub fn looks_like_path(s: &str) -> bool {
-    if s.contains('/') || s.contains('\\') {
-        return true;
-    }
-    if s.starts_with('.') || s.starts_with('~') {
-        return true;
-    }
-    let mut ch = s.chars();
-    if let (Some(first), Some(second)) = (ch.next(), ch.next()) {
-        if first.is_ascii_alphabetic() && second == ':' {
-            return true;
-        }
-    }
-    if let Some(dot) = s.rfind('.') {
-        let ext = &s[dot + 1..];
-        if !ext.is_empty() && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return true;
-        }
-    }
-    false
+/// Requires a 2+ char "scheme" so Windows drive letters (`C:\foo`, `D:bar`)
+/// don't trip — those fall through to [`Input::File`].
+fn custom_scheme_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^[A-Za-z][A-Za-z0-9+\-.]+:[^\\/]").expect("static regex"))
+}
+
+pub fn looks_like_custom_scheme(s: &str) -> bool {
+    custom_scheme_re().is_match(s)
+}
+
+/// Chars that cannot legally appear in a Windows filename (and are
+/// unusual enough on POSIX that treating them as a signal is safe).
+///
+/// `:` is intentionally excluded — drive letters use it, and
+/// [`looks_like_custom_scheme`] already routed `<scheme>:<body>` to Raw.
+/// Path separators (`/`, `\`) are also excluded since they're how
+/// directory components are written.
+pub fn has_invalid_path_chars(s: &str) -> bool {
+    s.chars()
+        .any(|c| matches!(c, '<' | '>' | '"' | '|' | '?' | '*') || (c as u32) < 0x20)
 }
 
 #[derive(Debug, Clone)]
@@ -62,9 +58,11 @@ pub enum Input {
     Raw(String),
 }
 
-/// Explicit override for how to classify an input — used by `--as`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+/// Explicit override for how to classify an input — used by `--as` and by
+/// `rule.input_type` to filter which kinds a rule applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
 #[clap(rename_all = "lower")]
+#[serde(rename_all = "lowercase")]
 pub enum InputKind {
     File,
     Url,
@@ -73,7 +71,21 @@ pub enum InputKind {
 
 impl Input {
     /// Classify `raw` and do the minimum parsing / canonicalization.
-    /// Auto-detection order: URL scheme → existing file → raw.
+    ///
+    /// Auto-detection order:
+    /// 1. URL scheme (`foo://…`)
+    /// 2. Existing filesystem path (canonicalized)
+    /// 3. Custom-scheme bare identifier (`issue:42`, `gh:owner/repo`) → Raw
+    /// 4. Contains chars no filename can hold (`<>"|?*`, controls) or is
+    ///    empty → Raw
+    /// 5. Everything else (bare words, extension-less names, not-yet-existing
+    ///    paths) → File, absolutized relative to the cwd
+    ///
+    /// Tier 5 is "when in doubt, it's a file": `Makefile`, `Dockerfile`,
+    /// `newfile.txt`, `./foo` all classify as File so editors can open or
+    /// create them without the user having to pass `--as file`. Use
+    /// `--as raw` or `rule.input_type` to route specific bare words to
+    /// a Raw-consuming rule instead.
     #[allow(dead_code)]
     pub fn from_arg(raw: &str) -> Result<Self> {
         Self::from_arg_as(raw, None)
@@ -88,9 +100,12 @@ impl Input {
                 Ok(Input::Url(u))
             }
             Some(InputKind::File) => {
+                // `--as file` must not fail on nonexistent paths — absolutize
+                // without canonicalize so the "create this file" flow works.
                 let p = PathBuf::from(raw)
                     .canonicalize()
-                    .with_context(|| format!("cannot resolve path: {raw}"))?;
+                    .or_else(|_| std::path::absolute(raw))
+                    .unwrap_or_else(|_| PathBuf::from(raw));
                 Ok(Input::File(p))
             }
             Some(InputKind::Raw) => Ok(Input::Raw(raw.to_string())),
@@ -102,14 +117,25 @@ impl Input {
                 if let Ok(p) = PathBuf::from(raw).canonicalize() {
                     return Ok(Input::File(p));
                 }
-                // Nonexistent but path-shaped: `$EDITOR=todoke newfile.txt`
-                // should still dispatch as a file so the editor can create it.
-                if looks_like_path(raw) {
-                    let abs = std::path::absolute(raw).unwrap_or_else(|_| PathBuf::from(raw));
-                    return Ok(Input::File(abs));
+                if looks_like_custom_scheme(raw) {
+                    return Ok(Input::Raw(raw.to_string()));
                 }
-                Ok(Input::Raw(raw.to_string()))
+                // Contains chars that can't appear in a filename (`<>"|?*`,
+                // controls) or is empty — not a plausible path, route to Raw.
+                if raw.is_empty() || has_invalid_path_chars(raw) {
+                    return Ok(Input::Raw(raw.to_string()));
+                }
+                let abs = std::path::absolute(raw).unwrap_or_else(|_| PathBuf::from(raw));
+                Ok(Input::File(abs))
             }
+        }
+    }
+
+    pub fn kind(&self) -> InputKind {
+        match self {
+            Input::File(_) => InputKind::File,
+            Input::Url(_) => InputKind::Url,
+            Input::Raw(_) => InputKind::Raw,
         }
     }
 
@@ -182,48 +208,87 @@ mod tests {
     }
 
     #[test]
-    fn raw_fallback_when_not_url_or_file() {
-        // A clearly non-existent bare word that isn't a URL falls to Raw.
+    fn custom_scheme_args_classify_as_raw() {
+        // `<scheme>:<body>` with a 2+ char scheme is treated as a custom
+        // routing identifier, not a file.
         let i = Input::from_arg("issue:1234").unwrap();
         assert!(matches!(i, Input::Raw(_)));
         assert_eq!(i.kind_label(), "raw");
         assert_eq!(i.match_string(), "issue:1234");
+
+        let i = Input::from_arg("gh:owner/repo").unwrap();
+        assert!(matches!(i, Input::Raw(_)));
     }
 
     #[test]
-    fn nonexistent_path_like_args_still_classify_as_file() {
-        // $EDITOR new-file use case: the file doesn't exist yet but the
-        // arg is clearly a path, so we keep it as Input::File.
-        let i = Input::from_arg("/tmp/does-not-exist-todoke-test.md").unwrap();
-        assert!(matches!(i, Input::File(_)));
-
-        let i = Input::from_arg("newfile.txt").unwrap();
-        assert!(matches!(i, Input::File(_)));
-
-        let i = Input::from_arg("./relative-new.log").unwrap();
-        assert!(matches!(i, Input::File(_)));
+    fn nonexistent_path_like_args_classify_as_file() {
+        // $EDITOR new-file use case: the file doesn't exist yet but we
+        // still treat it as a file so the editor can create it.
+        for s in [
+            "/tmp/does-not-exist-todoke-test.md",
+            "newfile.txt",
+            "./relative-new.log",
+        ] {
+            let i = Input::from_arg(s).unwrap();
+            assert!(matches!(i, Input::File(_)), "{s} should be File");
+        }
     }
 
     #[test]
-    fn bare_wordy_strings_stay_raw() {
-        // Things without any path markers stay in Raw land.
-        for s in ["HEAD", "main", "some-bare-word"] {
+    fn extensionless_bare_words_classify_as_file() {
+        // Makefile / Dockerfile / Rakefile / HEAD / plain words all default
+        // to File now — so `$EDITOR=todoke Makefile` Just Works and rules
+        // that want to treat bare words as Raw must opt in via
+        // `input_type = "raw"` (or the caller uses `--as raw`).
+        for s in ["Makefile", "Dockerfile", "HEAD", "main", "some-bare-word"] {
+            let i = Input::from_arg(s).unwrap();
+            assert!(matches!(i, Input::File(_)), "{s} should be File");
+        }
+    }
+
+    #[test]
+    fn invalid_path_chars_route_to_raw() {
+        // Chars that can't appear in a Windows filename mean the arg
+        // isn't a plausible path — classify as Raw so rules can match
+        // things like shell-ish free text or wildcards.
+        for s in ["foo|bar", "a?b", "star*arg", "quote\"it", "<tag>"] {
             let i = Input::from_arg(s).unwrap();
             assert!(matches!(i, Input::Raw(_)), "{s} should be Raw");
         }
     }
 
     #[test]
-    fn looks_like_path_cases() {
-        assert!(looks_like_path("/abs/path"));
-        assert!(looks_like_path(".\\win\\style"));
-        assert!(looks_like_path("./rel"));
-        assert!(looks_like_path("~/home"));
-        assert!(looks_like_path("C:/Users/x"));
-        assert!(looks_like_path("Cargo.toml"));
-        assert!(!looks_like_path("HEAD"));
-        assert!(!looks_like_path("issue:42"));
-        assert!(!looks_like_path("Makefile"));
+    fn has_invalid_path_chars_detects_reserved() {
+        assert!(has_invalid_path_chars("foo|bar"));
+        assert!(has_invalid_path_chars("a?b"));
+        assert!(has_invalid_path_chars("a\x01b"));
+        // Path separators and drive-letter colons are fine.
+        assert!(!has_invalid_path_chars("C:\\Users\\x"));
+        assert!(!has_invalid_path_chars("/abs/path"));
+        assert!(!has_invalid_path_chars("Makefile"));
+    }
+
+    #[test]
+    fn looks_like_custom_scheme_cases() {
+        assert!(looks_like_custom_scheme("issue:42"));
+        assert!(looks_like_custom_scheme("gh:owner/repo"));
+        assert!(looks_like_custom_scheme("jira:ABC-1"));
+        // 2+ char scheme requirement excludes Windows drive letters.
+        assert!(!looks_like_custom_scheme("C:\\Users\\x"));
+        assert!(!looks_like_custom_scheme("D:foo"));
+        // No colon at all.
+        assert!(!looks_like_custom_scheme("Makefile"));
+        assert!(!looks_like_custom_scheme("HEAD"));
+        // Colon followed by a path separator is still drive-letter-ish.
+        assert!(!looks_like_custom_scheme("scheme:/slash"));
+    }
+
+    #[test]
+    fn force_as_file_absolutizes_nonexistent() {
+        // `--as file NONEXISTENT` must not error; it should absolutize the
+        // path so downstream editors can create the file.
+        let i = Input::from_arg_as("nonexistent-todoke-test.md", Some(InputKind::File)).unwrap();
+        assert!(matches!(i, Input::File(_)));
     }
 
     #[test]

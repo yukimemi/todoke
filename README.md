@@ -126,20 +126,23 @@ match = '/src/company/'
 to = "code"
 mode = "remote"
 
-# Raw strings (not a URL, not an existing file, and not path-shaped) also
-# fall through to rules — capture groups are available to the handler as
-# `{{ cap.1 }}` / `{{ cap.name }}`.
+# Raw strings — custom-scheme bare ids like `issue:42` auto-detect as Raw
+# so this rule fires without `--as`. Capture groups are available to the
+# handler as `{{ cap.1 }}` / `{{ cap.name }}`.
 [[rules]]
 name = "gh-issue"
 match = '^issue:(\d+)$'
 to = "gh-issue"
 
-# Git refs — branch names, tags, short SHAs, etc. Useful with `--as raw`
-# when a file of the same name exists in the cwd.
+# Git refs — branch names, tags, short SHAs, etc. `input_type = "raw"`
+# pins this rule to `--as raw` so that bare words like `HEAD` / `main`,
+# which auto-detect as File, don't accidentally trigger the GitHub URL
+# handler when you meant to open a local file by that name.
 [[rules]]
 name = "gh-ref"
 match = '^(HEAD|main|master|develop|v?\d+\.\d+\.\d+|[0-9a-f]{7,40})$'
 to = "gh-ref"
+input_type = "raw"
 
 # Default: everything else goes to the shared nvim.
 [[rules]]
@@ -160,27 +163,16 @@ todoke notes.md
 # profile, or any CLI that accepts URLs.
 todoke https://github.com/yukimemi/todoke
 
-# Raw strings match rules too. Captures are available as {{ cap.N }}.
+# Raw strings match rules too. `<scheme>:<body>` bare ids auto-detect as
+# Raw so gh-issue fires without `--as`. Captures are available as
+# `{{ cap.N }}`.
 todoke issue:42      # → firefox opens issues/42
-todoke HEAD          # → firefox opens the repo tree at HEAD
 
-# --as picks which classification you want when both are valid.
-#
-# Inside a git worktree, `HEAD` resolves as a file (the .git/HEAD
-# pointer). todoke then canonicalizes the path and feeds the full
-# absolute form to rule matching, e.g.
-#
-#     /home/you/repo/.git/HEAD
-#
-# A tight anchored regex like `^HEAD$` on the gh-ref rule doesn't hit
-# that — the path is too long. The default catch-all `.*` wins and
-# nvim opens the file. That's a reasonable outcome, just not the
-# "open the GitHub tree URL" one we wanted.
-#
-# Passing `--as raw` skips canonicalization entirely and hands the
-# literal string "HEAD" to rule matching. Now `^HEAD$` hits cleanly
-# and the gh-ref rule fires.
-todoke --as raw HEAD
+# Bare words like `HEAD` or `Makefile` auto-detect as File (so
+# `$EDITOR=todoke Makefile` Just Works — see the $EDITOR section below).
+# When you want `HEAD` routed as a git ref instead, pass `--as raw` and
+# wire the matching rule with `input_type = "raw"`:
+todoke --as raw HEAD # → firefox opens the repo tree at HEAD
 
 # See which rule would match, without actually dispatching
 todoke check notes.md https://example.com issue:42
@@ -268,10 +260,13 @@ git commit      # → todoke routes COMMIT_EDITMSG to nvim mode=new sync=true
 The bundled default config is compatible with every `$EDITOR=…` caller I
 know of (git, crontab, visudo, fc, mutt, …).
 
-Nonexistent-but-path-shaped args (`newfile.txt`, `./foo.log`,
-`/tmp/new.md`, `C:\scratch\x.txt`) classify as `file`, so
-`todoke newfile.txt` works the same as `vim newfile.txt` — rules match
-against the absolute form and the editor creates the file on write.
+Any arg that isn't a URL (`foo://…`) or a custom-scheme bare id
+(`issue:42`) auto-detects as a **file** — including extension-less
+names like `Makefile`, `Dockerfile`, `Rakefile` and not-yet-existing
+paths like `newfile.txt` or `/tmp/new.md`. So `todoke Makefile` and
+`todoke newfile.txt` behave just like `vim Makefile` / `vim newfile.txt`
+— rules match against the absolute path and the editor creates the
+file on write.
 
 ### As OS default program (Windows)
 
@@ -315,6 +310,7 @@ A delivery target (the value behind a rule's `to = "<name>"`).
 | `group`   | string                    | `"default"`  | instance identity (one nvim per group)       |
 | `mode`    | string                    | `"remote"`   | free-form; `"remote"` / `"new"` are reserved for neovim behavior, otherwise used only to pick `args.<mode>` |
 | `sync`    | bool                      | `false`      | `true` = block until handler exits           |
+| `input_type` | `"file" \| "url" \| "raw"` or array | all kinds | restrict which input kinds this rule applies to. Example: `input_type = "raw"` makes the rule fire only for `--as raw` / auto-detected Raw inputs — useful for git-ref style patterns (`^HEAD$`, `^main$`) that must not shadow a local file of the same name. |
 
 ### Template context
 
