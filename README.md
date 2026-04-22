@@ -99,6 +99,12 @@ command = "firefox"
 append_inputs = false
 args.default = ["https://github.com/yukimemi/todoke/issues/{{ cap.1 }}"]
 
+# Git-ref target: opens the GitHub tree browser at a branch / tag / sha.
+[todoke.gh-ref]
+command = "firefox"
+append_inputs = false
+args.default = ["https://github.com/yukimemi/todoke/tree/{{ input }}"]
+
 # git commit, rebase, etc. — always a blocking fresh nvim.
 [[rules]]
 name = "editor-callback"
@@ -126,6 +132,13 @@ mode = "remote"
 name = "gh-issue"
 match = '^issue:(\d+)$'
 to = "gh-issue"
+
+# Git refs — branch names, tags, short SHAs, etc. Useful with `--as raw`
+# when a file of the same name exists in the cwd.
+[[rules]]
+name = "gh-ref"
+match = '^(HEAD|main|master|develop|v?\d+\.\d+\.\d+|[0-9a-f]{7,40})$'
+to = "gh-ref"
 
 # Default: everything else goes to the shared nvim.
 [[rules]]
