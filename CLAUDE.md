@@ -103,6 +103,13 @@ locked build). A pre-push hook invokes it automatically.
 - Every PR triggers **Gemini Code Assist** and **CodeRabbit** reviews.
   Wait for both to post, address their comments (push fixes to the PR
   branch), and only merge once the feedback is resolved.
+- **Reply to the reviewer after pushing a fix.** For every review
+  comment you act on, post a reply in that comment's thread with an
+  **@-mention of the reviewer** (`@gemini-code-assist`,
+  `@coderabbitai`) so they know the feedback has been addressed.
+  A silent fix is invisible to the reviewer — they'll re-review
+  blindly, and you lose the audit trail that ties the fix commit to
+  the original concern.
 - Tag-based releases: `git tag vX.Y.Z && git push origin vX.Y.Z`
   triggers the GitHub Actions release workflow.
 
