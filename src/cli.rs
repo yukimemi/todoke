@@ -24,7 +24,6 @@ pub struct Cli {
     #[arg(
         value_name = "INPUTS",
         help = "Files, URLs, or raw strings to dispatch (no subcommand = default dispatch)",
-        trailing_var_arg = true,
         allow_hyphen_values = true
     )]
     pub files: Vec<PathBuf>,
