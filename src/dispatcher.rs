@@ -676,6 +676,7 @@ async fn run_neovim(
         args_remote,
         args_new,
         passthrough: batch.passthrough_inputs.clone(),
+        gui: target.gui,
     };
     backend.dispatch(&files, &batch.mode, batch.sync).await
 }
@@ -702,6 +703,7 @@ fn run_exec(
         args: rendered_args.to_vec(),
         env: target.env.clone(),
         append_inputs: target.append_inputs,
+        gui: target.gui,
     };
     let dctx = ExecCtx {
         inputs: &batch.inputs,

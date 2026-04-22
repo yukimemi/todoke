@@ -57,6 +57,9 @@ pub struct NeovimBackend {
     /// warns and drops them. Spawn paths (`new`, or remote fallback
     /// `spawn_detached_with_listen`) honor them.
     pub passthrough: Vec<String>,
+    /// Flagged by the caller when the `command` is a GUI front-end
+    /// (neovide, nvim-qt). Controls the detached-spawn code path on Windows.
+    pub gui: bool,
 }
 
 impl NeovimBackend {
@@ -133,6 +136,7 @@ impl NeovimBackend {
         cmd.arg("--listen").arg(&self.listen);
         platform::spawn_detached(
             &mut cmd,
+            self.gui,
             files.first().map(PathBuf::as_path).unwrap_or(Path::new("")),
         )
         .with_context(|| format!("failed to spawn {}", self.command))?;
@@ -152,6 +156,7 @@ impl NeovimBackend {
         }
         platform::spawn_detached(
             &mut cmd,
+            self.gui,
             files.first().map(PathBuf::as_path).unwrap_or(Path::new("")),
         )
         .with_context(|| format!("failed to spawn {}", self.command))?;

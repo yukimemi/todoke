@@ -57,6 +57,17 @@ pub struct Target {
     /// don't want the raw value passed again.
     #[serde(default = "default_true")]
     pub append_inputs: bool,
+    /// Set to `true` when the handler is a **GUI** application (neovide,
+    /// nvim-qt, vscode, firefox, …). On Windows, detached spawns then use
+    /// `CREATE_NO_WINDOW + DETACHED_PROCESS` instead of the default
+    /// `cmd /c start` wrapper, so no transient cmd window flashes before
+    /// the GUI appears. On Unix this flag is a no-op.
+    ///
+    /// Leave unset / `false` for console / TUI handlers (nvim in a terminal,
+    /// helix, bat, …) — those rely on the fresh console window that
+    /// `cmd /c start` allocates.
+    #[serde(default)]
+    pub gui: bool,
 }
 
 fn default_true() -> bool {
@@ -652,6 +663,23 @@ mod tests {
         assert!(!cfg.raw.rules[0].sync);
         assert!(cfg.raw.rules[0].group.is_none());
         assert_eq!(cfg.raw.todoke["a"].kind, TargetKind::Exec);
+        // gui is a new public field; lock in the backward-compatible default.
+        assert!(!cfg.raw.todoke["a"].gui);
+    }
+
+    #[test]
+    fn target_gui_parses_true() {
+        let text = r#"
+            [todoke.a]
+            command = "neovide"
+            gui = true
+
+            [[rules]]
+            match = ".*"
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        assert!(cfg.raw.todoke["a"].gui);
     }
 
     #[test]

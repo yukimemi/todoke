@@ -30,6 +30,9 @@ pub struct ExecBackend {
     /// Whether to append each input's display string as a trailing arg
     /// after the rendered `args` list. Defaults to true.
     pub append_inputs: bool,
+    /// GUI handler hint — controls the detached-spawn code path on Windows
+    /// (skip `cmd /c start` wrapper when true so no cmd window flashes).
+    pub gui: bool,
 }
 
 pub struct DispatchCtx<'a> {
@@ -104,7 +107,7 @@ impl ExecBackend {
 
     fn run_detached(&self, cmd: &mut StdCommand) -> Result<()> {
         info!(command = %self.command, "spawning detached");
-        platform::spawn_detached(cmd, Path::new(""))
+        platform::spawn_detached(cmd, self.gui, Path::new(""))
             .with_context(|| format!("failed to spawn {}", self.command))
     }
 
@@ -139,6 +142,7 @@ mod tests {
             ],
             env: BTreeMap::new(),
             append_inputs: true,
+            gui: false,
         };
         let inputs = vec![Input::File(PathBuf::from("/tmp/hello.rs"))];
         let passthrough: Vec<String> = Vec::new();
