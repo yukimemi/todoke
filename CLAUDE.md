@@ -110,6 +110,14 @@ locked build). A pre-push hook invokes it automatically.
   A silent fix is invisible to the reviewer — they'll re-review
   blindly, and you lose the audit trail that ties the fix commit to
   the original concern.
+- **Merge gating.** Do NOT merge until **both** conditions are true:
+  1. Every review bot (Gemini, CodeRabbit) has stopped posting new
+     actionable comments — keep iterating fix → @-mention → wait
+     until they go quiet.
+  2. The repo owner (@yukimemi) has given explicit approval to merge.
+  Acknowledgement-only replies from a bot ("Understood", "Thank you")
+  count as a quiet pass for that thread. New actionable findings
+  restart the loop.
 - Tag-based releases: `git tag vX.Y.Z && git push origin vX.Y.Z`
   triggers the GitHub Actions release workflow.
 
