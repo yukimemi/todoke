@@ -14,20 +14,11 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"/></a>
 </p>
 
-```
-┌──────┐       ┌────────┐       ╭──▶ nvim
-│ file │ ──▶   │ todoke │ ──▶   ├──▶ code
-└──────┘       └────────┘       ╰──▶ script / …
-```
-
 `todoke` takes one or more file paths and decides what to do with each of
 them — by regex-matching the path against a TOML ruleset. A rule can target
 a long-running neovim (reused via msgpack-RPC), any generic CLI editor, or a
 raw shell script. Perfect as your OS default program for text files, as
 `$EDITOR`, or as a standalone file handler.
-
-It is the successor to [`edtr`][edtr] / [`hitori.vim`][hitori], generalized
-from "editor router" into a full rule-driven dispatcher.
 
 ## Features
 
@@ -45,11 +36,7 @@ from "editor router" into a full rule-driven dispatcher.
   conditionals that include whole editor / rule blocks, every Tera filter.
 - **Generic CLI support**: any command-line tool works (`code`, `vim`,
   `helix`, `subl`, `emacsclient`, `bat`, `pandoc`, …) without custom code.
-- **`edtr` compatibility**: same embedded default config, same config
-  schema. Existing `edtr` users migrate by renaming the config directory
-  (see below).
-- **Fast**: static Rust binary, cold start in milliseconds. On Windows this
-  is often 10–100× faster than denops-based alternatives.
+- **Fast**: static Rust binary, cold start in milliseconds.
 
 ## Install
 
@@ -504,21 +491,8 @@ Logging is also controllable via `RUST_LOG`.
   handler, turning todoke into a general "open with rules" tool for any
   file type (previewer, formatter, pipeline, …).
 
-## Heritage
-
-`todoke` extends [`edtr`][edtr], which was itself a Rust rewrite of
-[`hitori.vim`][hitori]. The lineage:
-
-- `hitori.vim` (denops): single-instance vim plugin, vim/neovim-only, slow
-  on Windows.
-- `edtr`: Rust rewrite, editor-agnostic, fast on all platforms.
-- `todoke`: `edtr` plus broader scope — any command-line handler (not just
-  editors), any file type. The name 「届け」 means *deliver* in Japanese.
-
 ## License
 
 [MIT](./LICENSE) — © 2026 yukimemi.
 
 [tera]: https://keats.github.io/tera/docs/#built-ins
-[hitori]: https://github.com/yukimemi/hitori.vim
-[edtr]: https://crates.io/crates/edtr
