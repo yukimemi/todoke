@@ -76,7 +76,11 @@ fn no_args_uses_default_rule() {
         "#,
     );
 
-    let (ok, out, err) = run_with(&["--config", &config.to_string_lossy(), "--dry-run"]);
+    let (ok, out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "--todoke-dry-run",
+    ]);
     assert!(ok, "stderr: {err}");
     assert!(out.contains("to=echo"), "stdout: {out}");
     assert!(out.contains("rule=default"), "stdout: {out}");
@@ -160,7 +164,7 @@ fn gnu_posix_argument_syntax_parses_end_to_end() {
     let cfg_str = config.to_string_lossy().into_owned();
 
     let run_dry = |extra: &[&str]| -> String {
-        let mut args: Vec<&str> = vec!["--config", &cfg_str, "--dry-run", "--"];
+        let mut args: Vec<&str> = vec!["--todoke-config", &cfg_str, "--todoke-dry-run", "--"];
         args.extend_from_slice(extra);
         let (ok, out, err) = run_with(&args);
         assert!(ok, "failed for {extra:?}: stderr: {err}");
@@ -287,7 +291,11 @@ fn no_args_no_rules_errors() {
         "#,
     );
 
-    let (ok, _out, err) = run_with(&["--config", &config.to_string_lossy(), "--dry-run"]);
+    let (ok, _out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "--todoke-dry-run",
+    ]);
     assert!(!ok);
     assert!(err.contains("no rule matches empty-args"), "stderr: {err}");
 }
@@ -326,9 +334,9 @@ fn dry_run_plans_default_rule() {
     );
 
     let (ok, out, err) = run_with(&[
-        "--config",
+        "--todoke-config",
         &config.to_string_lossy(),
-        "--dry-run",
+        "--todoke-dry-run",
         &file.to_string_lossy(),
     ]);
     assert!(ok, "stderr: {err}");
@@ -366,7 +374,7 @@ fn check_shows_matched_rule_per_file() {
     );
 
     let (ok, out, err) = run_with(&[
-        "--config",
+        "--todoke-config",
         &config.to_string_lossy(),
         "check",
         &rs_file.to_string_lossy(),
@@ -398,9 +406,9 @@ fn invalid_config_reports_error() {
     write_file(&config, "this is not valid toml [[[");
 
     let (ok, _out, err) = run_with(&[
-        "--config",
+        "--todoke-config",
         &config.to_string_lossy(),
-        "--dry-run",
+        "--todoke-dry-run",
         &file.to_string_lossy(),
     ]);
     assert!(!ok);
@@ -423,9 +431,9 @@ fn unknown_to_reference_reports_error() {
     );
 
     let (ok, _out, err) = run_with(&[
-        "--config",
+        "--todoke-config",
         &config.to_string_lossy(),
-        "--dry-run",
+        "--todoke-dry-run",
         &file.to_string_lossy(),
     ]);
     assert!(!ok);

@@ -122,7 +122,7 @@ match = '^issue:(\d+)$'
 to = "gh-issue"
 
 # Git refs — branch names, tags, short SHAs, etc. `input_type = "raw"`
-# pins this rule to `--as raw` so that bare words like `HEAD` / `main`,
+# pins this rule to `--todoke-as raw` so that bare words like `HEAD` / `main`,
 # which auto-detect as File, don't accidentally trigger the GitHub URL
 # handler when you meant to open a local file by that name.
 [[rules]]
@@ -167,15 +167,15 @@ todoke issue:42      # → firefox opens issues/42
 
 # Bare words like `HEAD` or `Makefile` auto-detect as File (so
 # `$EDITOR=todoke Makefile` Just Works — see the $EDITOR section below).
-# When you want `HEAD` routed as a git ref instead, pass `--as raw` and
-# wire the matching rule with `input_type = "raw"`:
-todoke --as raw HEAD # → firefox opens the repo tree at HEAD
+# When you want `HEAD` routed as a git ref instead, pass `--todoke-as raw`
+# and wire the matching rule with `input_type = "raw"`:
+todoke --todoke-as raw HEAD # → firefox opens the repo tree at HEAD
 
 # See which rule would match, without actually dispatching
 todoke check notes.md https://example.com issue:42
 
 # Same dispatch logic, don't execute
-todoke --dry-run notes.md
+todoke --todoke-dry-run notes.md
 
 # Lint the config for common footguns
 todoke doctor
@@ -404,7 +404,7 @@ A delivery target (the value behind a rule's `to = "<name>"`).
 | `group`   | string                    | `"default"`  | instance identity (one nvim per group)       |
 | `mode`    | string                    | `"remote"`   | free-form; `"remote"` / `"new"` are reserved for neovim behavior, otherwise used only to pick `args.<mode>` |
 | `sync`    | bool                      | `false`      | `true` = block until handler exits           |
-| `input_type` | `"file" \| "url" \| "raw"` or array | all kinds | restrict which input kinds this rule applies to. Example: `input_type = "raw"` makes the rule fire only for `--as raw` / auto-detected Raw inputs — useful for git-ref style patterns (`^HEAD$`, `^main$`) that must not shadow a local file of the same name. |
+| `input_type` | `"file" \| "url" \| "raw"` or array | all kinds | restrict which input kinds this rule applies to. Example: `input_type = "raw"` makes the rule fire only for `--todoke-as raw` / auto-detected Raw inputs — useful for git-ref style patterns (`^HEAD$`, `^main$`) that must not shadow a local file of the same name. |
 | `joined`   | bool                       | `false`     | match against the full argv-join (all positional args concatenated with spaces, **pre auto-detect**) instead of each input individually. On a hit, the named capture `input` is re-classified via `Input::from_arg` and becomes the batch's sole input; other captures ride along in `{{ cap.<name> }}` for the target's args templates. Designed for `$EDITOR=todoke +42 file.txt` style calls. Mutually exclusive with `passthrough`. |
 | `passthrough` | bool                    | `false`     | match against the **raw argv** (pre auto-detect) per input. On a hit, the raw string is forwarded to the target's start-up argv instead of being opened/edited. Use for editor flags like `+42` / `-c :set ft=...`. Mutually exclusive with `joined`. |
 | `consumes` | non-negative int           | `0`         | only valid with `passthrough = true`. When the rule matches, also forward the next **N** argv items as part of the same passthrough sequence. Designed for spaced-value flags like `-c :set ft=md` where the value is its own argv — a `consumes = 1` on `match = '^-c$'` keeps the flag and its value together. |
@@ -470,13 +470,19 @@ todoke kill <group> | --all    # terminate instances
 todoke config path | edit | validate | show
 ```
 
-Flags:
+Flags (all long-only and `--todoke-` prefixed so they don't collide with
+flags the downstream tool expects):
 
-- `-c, --config <PATH>` — override config path
-- `-E, --editor <NAME>` — bypass rule, force handler
-- `-G, --group <NAME>`  — bypass rule, force group
-- `--dry-run`           — print the resolved plan without executing
-- `-v, --verbose`       — `-v` = info, `-vv` = debug, `-vvv` = trace
+- `--todoke-config <PATH>` — override config path
+- `--todoke-editor <NAME>` — bypass rule, force handler
+- `--todoke-group <NAME>`  — bypass rule, force group
+- `--todoke-as <KIND>`     — force input classification (`file` / `url` / `raw`)
+- `--todoke-dry-run`       — print the resolved plan without executing
+- `--todoke-verbose`       — repeat for more verbosity (info / debug / trace)
+
+Positional args are collected with `trailing_var_arg + allow_hyphen_values`,
+so `-c :set ft=md` / `+42` / `-abc` flow straight through to whichever
+passthrough / normal rule matches — no `--` separator needed.
 
 Logging is also controllable via `RUST_LOG`.
 
