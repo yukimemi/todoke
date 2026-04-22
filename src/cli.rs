@@ -15,15 +15,30 @@ pub mod config;
     long_about = None,
 )]
 pub struct Cli {
+    // `trailing_var_arg` is load-bearing: on some platforms (Windows CI)
+    // clap rejects unknown short flags like `-f` even with
+    // `allow_hyphen_values = true` — the flag parser fires first and the
+    // value never reaches the positional collector. `trailing_var_arg`
+    // forces everything after the first positional into this Vec, so
+    // `$EDITOR=todoke`-style invocations (`todoke -c :set ft=md +42 file.txt`)
+    // flow through to whichever passthrough / normal rule matches.
+    //
+    // Trade-off: todoke's own flags must precede inputs.
+    // `todoke --todoke-dry-run +42 file.txt` works; the reverse order
+    // `todoke +42 file.txt --todoke-dry-run` treats the trailing flag
+    // as a positional. That's the right shape for $EDITOR callers
+    // (which never inject todoke flags after inputs) and for the
+    // Quick-start idioms in the README.
     #[arg(
         value_name = "INPUTS",
-        help = "Files, URLs, or raw strings to dispatch (no subcommand = default dispatch)"
+        help = "Files, URLs, or raw strings to dispatch (no subcommand = default dispatch)",
+        trailing_var_arg = true,
+        allow_hyphen_values = true
     )]
     pub files: Vec<PathBuf>,
 
     #[arg(
-        short = 'c',
-        long = "config",
+        long = "todoke-config",
         value_name = "PATH",
         help = "Override config path",
         global = true
@@ -31,23 +46,21 @@ pub struct Cli {
     pub config: Option<PathBuf>,
 
     #[arg(
-        short = 'E',
-        long = "editor",
+        long = "todoke-editor",
         value_name = "NAME",
         help = "Bypass rules, force handler"
     )]
     pub editor: Option<String>,
 
     #[arg(
-        short = 'G',
-        long = "group",
+        long = "todoke-group",
         value_name = "NAME",
         help = "Bypass rules, force group"
     )]
     pub group: Option<String>,
 
     #[arg(
-        long = "as",
+        long = "todoke-as",
         value_name = "KIND",
         value_enum,
         help = "Force how each argument is classified (skip auto-detection)"
@@ -55,12 +68,16 @@ pub struct Cli {
     pub as_kind: Option<InputKind>,
 
     #[arg(
-        long = "dry-run",
+        long = "todoke-dry-run",
         help = "Resolve rules and log decisions without dispatching"
     )]
     pub dry_run: bool,
 
-    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count, help = "Increase log verbosity (-v, -vv)")]
+    #[arg(
+        long = "todoke-verbose",
+        action = clap::ArgAction::Count,
+        help = "Increase log verbosity (repeat for more: --todoke-verbose --todoke-verbose)",
+    )]
     pub verbose: u8,
 
     #[command(subcommand)]

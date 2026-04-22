@@ -76,7 +76,11 @@ fn no_args_uses_default_rule() {
         "#,
     );
 
-    let (ok, out, err) = run_with(&["--config", &config.to_string_lossy(), "--dry-run"]);
+    let (ok, out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "--todoke-dry-run",
+    ]);
     assert!(ok, "stderr: {err}");
     assert!(out.contains("to=echo"), "stdout: {out}");
     assert!(out.contains("rule=default"), "stdout: {out}");
@@ -95,12 +99,15 @@ fn gnu_posix_argument_syntax_parses_end_to_end() {
     //   - short spaced `-s val`          (two argv, consumes = 1)
     //   - long spaced `--long val`       (two argv, consumes = 1)
     //   - variadic `-p a b c`            (consumes_until)
-    //   - GNU separator `-- x y`         (consumes_rest)
     //   - positional file                (file input)
     //   - stdin marker `-`               (passthrough)
     //
     // The rule set uses match regexes anchored to full argv, so every
     // pattern lands in exactly one rule.
+    //
+    // GNU separator `--` is not exercised here because clap consumes it
+    // as the end-of-options marker before todoke's argv parser sees it —
+    // `consumes_rest` is covered by a dedicated rule pattern below.
 
     let dir = temp_dir();
     let config = dir.join("todoke.toml");
@@ -134,10 +141,12 @@ fn gnu_posix_argument_syntax_parses_end_to_end() {
             passthrough = true
             consumes_until = '^[-+]'
 
-            # GNU separator: everything after `--` is for the target
+            # `++rest` sentinel: after this token, eat every remaining argv.
+            # Uses a non-`--` sentinel because clap swallows `--` before it
+            # reaches todoke's own argv parser.
             [[rules]]
-            name = "gnu-separator"
-            match = '^--$'
+            name = "rest-sentinel"
+            match = '^\+\+rest$'
             to = "echo"
             passthrough = true
             consumes_rest = true
@@ -159,8 +168,11 @@ fn gnu_posix_argument_syntax_parses_end_to_end() {
 
     let cfg_str = config.to_string_lossy().into_owned();
 
+    // No `--` separator: the whole point of `allow_hyphen_values` on the
+    // positional is that hyphen-shaped argv (`-f`, `+42`, `-sfoo`, …)
+    // flow through as positionals without escape.
     let run_dry = |extra: &[&str]| -> String {
-        let mut args: Vec<&str> = vec!["--config", &cfg_str, "--dry-run", "--"];
+        let mut args: Vec<&str> = vec!["--todoke-config", &cfg_str, "--todoke-dry-run"];
         args.extend_from_slice(extra);
         let (ok, out, err) = run_with(&args);
         assert!(ok, "failed for {extra:?}: stderr: {err}");
@@ -230,9 +242,9 @@ fn gnu_posix_argument_syntax_parses_end_to_end() {
             expect_file_contains: &[],
         },
         Case {
-            label: "GNU separator (-- x y)",
-            args: &["--", "x", "y"],
-            expect_passthrough: &["--", "x", "y"],
+            label: "rest sentinel (++rest x y)",
+            args: &["++rest", "x", "y"],
+            expect_passthrough: &["++rest", "x", "y"],
             expect_file_contains: &[],
         },
         Case {
@@ -248,9 +260,9 @@ fn gnu_posix_argument_syntax_parses_end_to_end() {
             expect_file_contains: &[],
         },
         Case {
-            label: "mixed (-s val -p a b -- z)",
-            args: &["-s", "val", "-p", "a", "b", "--", "z"],
-            expect_passthrough: &["-s", "val", "-p", "a", "b", "--", "z"],
+            label: "mixed (-s val -p a b ++rest z)",
+            args: &["-s", "val", "-p", "a", "b", "++rest", "z"],
+            expect_passthrough: &["-s", "val", "-p", "a", "b", "++rest", "z"],
             expect_file_contains: &[],
         },
     ];
@@ -287,7 +299,11 @@ fn no_args_no_rules_errors() {
         "#,
     );
 
-    let (ok, _out, err) = run_with(&["--config", &config.to_string_lossy(), "--dry-run"]);
+    let (ok, _out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "--todoke-dry-run",
+    ]);
     assert!(!ok);
     assert!(err.contains("no rule matches empty-args"), "stderr: {err}");
 }
@@ -326,9 +342,9 @@ fn dry_run_plans_default_rule() {
     );
 
     let (ok, out, err) = run_with(&[
-        "--config",
+        "--todoke-config",
         &config.to_string_lossy(),
-        "--dry-run",
+        "--todoke-dry-run",
         &file.to_string_lossy(),
     ]);
     assert!(ok, "stderr: {err}");
@@ -366,7 +382,7 @@ fn check_shows_matched_rule_per_file() {
     );
 
     let (ok, out, err) = run_with(&[
-        "--config",
+        "--todoke-config",
         &config.to_string_lossy(),
         "check",
         &rs_file.to_string_lossy(),
@@ -398,9 +414,9 @@ fn invalid_config_reports_error() {
     write_file(&config, "this is not valid toml [[[");
 
     let (ok, _out, err) = run_with(&[
-        "--config",
+        "--todoke-config",
         &config.to_string_lossy(),
-        "--dry-run",
+        "--todoke-dry-run",
         &file.to_string_lossy(),
     ]);
     assert!(!ok);
@@ -423,9 +439,9 @@ fn unknown_to_reference_reports_error() {
     );
 
     let (ok, _out, err) = run_with(&[
-        "--config",
+        "--todoke-config",
         &config.to_string_lossy(),
-        "--dry-run",
+        "--todoke-dry-run",
         &file.to_string_lossy(),
     ]);
     assert!(!ok);
