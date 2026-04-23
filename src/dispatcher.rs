@@ -478,40 +478,40 @@ fn plan_batches(
                 }
             }
             None => {
-                // `to`-less: merge by group only.
-                let candidates: Vec<BatchKey> = groups
-                    .keys()
-                    .filter(|k| k.group == group)
-                    .cloned()
-                    .collect();
-                match candidates.len() {
-                    0 => {
-                        warn!(
-                            rule = %rule_name,
-                            group = %group,
-                            dropped = ?consumed,
-                            "passthrough rule has no `to` and no batch in this group — dropping argv",
-                        );
-                        continue;
-                    }
-                    1 => candidates.into_iter().next().unwrap(),
-                    n => {
-                        let first = candidates.into_iter().next().unwrap();
-                        warn!(
-                            rule = %rule_name,
-                            group = %group,
-                            candidates = n,
-                            chosen_target = %first.target,
-                            "passthrough rule has no `to` and multiple batches in this group; merging into first — set `to` explicitly to disambiguate",
-                        );
-                        first
-                    }
+                // `to`-less: merge by group only. Iterate once, peek first
+                // match and count the rest — no intermediate Vec.
+                let mut matching = groups.keys().filter(|k| k.group == group);
+                let Some(first) = matching.next().cloned() else {
+                    warn!(
+                        rule = %rule_name,
+                        group = %group,
+                        dropped = ?consumed,
+                        "passthrough rule has no `to` and no batch in this group — dropping argv",
+                    );
+                    continue;
+                };
+                let extra = matching.count();
+                if extra > 0 {
+                    warn!(
+                        rule = %rule_name,
+                        group = %group,
+                        candidates = extra + 1,
+                        chosen_target = %first.target,
+                        "passthrough rule has no `to` and multiple batches in this group; merging into first — set `to` explicitly to disambiguate",
+                    );
                 }
+                first
             }
         };
 
         let batch = groups.entry(key).or_insert_with(|| Batch {
-            target_name: target_name_opt.clone().unwrap_or_default(),
+            // to-less passthrough never hits this branch: it either
+            // drops (no match) or merges into an existing key (first
+            // match). `or_insert_with` only fires on the `Some(to)`
+            // new-batch fallback, where target_name_opt is guaranteed Some.
+            target_name: target_name_opt
+                .clone()
+                .expect("or_insert_with only fires for Some(to) path"),
             group: group.clone(),
             mode: rule.mode.clone(),
             sync: rule.sync,
