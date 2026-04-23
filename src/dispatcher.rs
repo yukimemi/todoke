@@ -239,6 +239,7 @@ fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
         .unwrap_or_else(|| format!("rule[{rule_idx}]"));
 
     let mut tera = new_engine();
+    let empty_passthrough: Vec<String> = Vec::new();
     let ctx_phase2 = build_context(Context {
         input: None,
         command: "",
@@ -247,6 +248,7 @@ fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
         rule_name: &rule_name,
         vars: &cfg.raw.vars,
         cap: &cap,
+        passthrough: &empty_passthrough,
     });
 
     let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx_phase2)?;
@@ -371,6 +373,7 @@ fn plan_batches(
             rule_name: &rule_name,
             vars: &cfg.raw.vars,
             cap: &cap,
+            passthrough: &[],
         });
 
         let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx)?;
@@ -412,6 +415,7 @@ fn plan_batches(
             rule_name: &rule_name,
             vars: &cfg.raw.vars,
             cap: &cap,
+            passthrough: &[],
         });
         let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx)?;
         let target_name = resolve_target_name(cli, rule, &mut tera, &ctx)?;
@@ -508,6 +512,7 @@ fn build_joined_batch(
         rule_name: &rule_name,
         vars: &cfg.raw.vars,
         cap: &cap,
+        passthrough: &[],
     });
     let group = resolve_group_with_ctx(cli, rule, tera, &ctx)?;
     let target_name = resolve_target_name(cli, rule, tera, &ctx)?;
@@ -615,6 +620,7 @@ async fn run_batch(cfg: &ResolvedConfig, batch: &Batch) -> Result<()> {
         rule_name: &batch.rule_name,
         vars: &cfg.raw.vars,
         cap: &batch.cap,
+        passthrough: &batch.passthrough_inputs,
     });
 
     let command =
@@ -703,6 +709,7 @@ fn run_exec(
         args: rendered_args.to_vec(),
         env: target.env.clone(),
         append_inputs: target.append_inputs,
+        append_passthrough: target.append_passthrough,
         gui: target.gui,
     };
     let dctx = ExecCtx {

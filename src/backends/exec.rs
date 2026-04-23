@@ -13,8 +13,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::{Command as StdCommand, Stdio};
+use std::sync::OnceLock;
 
 use anyhow::{Context as _, Result, anyhow};
+use regex::Regex;
 use tracing::{debug, info};
 
 use crate::input::Input;
@@ -22,14 +24,38 @@ use crate::matcher::CaptureMap;
 use crate::platform;
 use crate::template::{Context, build_context, render};
 
+/// True when the joined args text references `{{ input }}` or any of the
+/// input-derived context vars (`file_*`, `url_*`). `cap.*` is intentionally
+/// excluded — captures are ambiguous enough that their presence can't be
+/// taken as proof of input reconstruction.
+fn references_input(text: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re =
+        RE.get_or_init(|| Regex::new(r"\{\{\s*(input|file_\w+|url_\w+)\b").expect("static regex"));
+    re.is_match(text)
+}
+
+/// True when the joined args text references `{{ passthrough }}` in any
+/// form (standalone, filtered, iterated).
+fn references_passthrough(text: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"\{\{\s*passthrough\b|\bfor\s+\w+\s+in\s+passthrough\b").expect("static regex")
+    });
+    re.is_match(text)
+}
+
 #[derive(Debug, Clone)]
 pub struct ExecBackend {
     pub command: String,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
-    /// Whether to append each input's display string as a trailing arg
-    /// after the rendered `args` list. Defaults to true.
-    pub append_inputs: bool,
+    /// `None` → auto (append when no args template references input/
+    /// file_*/url_*); `Some(true)` → always append; `Some(false)` → never.
+    pub append_inputs: Option<bool>,
+    /// Same semantics as `append_inputs` but keyed on `{{ passthrough }}`
+    /// references.
+    pub append_passthrough: Option<bool>,
     /// GUI handler hint — controls the detached-spawn code path on Windows
     /// (skip `cmd /c start` wrapper when true so no cmd window flashes).
     pub gui: bool,
@@ -54,12 +80,27 @@ impl ExecBackend {
     pub fn dispatch(&self, dctx: DispatchCtx<'_>) -> Result<()> {
         let rendered_args = self.render_args(&dctx)?;
 
+        // Auto-detect template references so "use {{ input }} in args"
+        // doesn't end up also pasting the raw value at the end. Scan the
+        // raw template strings (pre-render) so a reference inside a
+        // `{% if %}` branch still counts — false positives are preferable
+        // to double-insertion here.
+        let args_joined = self.args.join("\n");
+        let append_inputs = self
+            .append_inputs
+            .unwrap_or_else(|| !references_input(&args_joined));
+        let append_passthrough = self
+            .append_passthrough
+            .unwrap_or_else(|| !references_passthrough(&args_joined));
+
         let mut cmd = StdCommand::new(&self.command);
         cmd.args(&rendered_args);
-        for p in dctx.passthrough {
-            cmd.arg(p);
+        if append_passthrough {
+            for p in dctx.passthrough {
+                cmd.arg(p);
+            }
         }
-        if self.append_inputs {
+        if append_inputs {
             for i in dctx.inputs {
                 cmd.arg(i.display_string());
             }
@@ -73,7 +114,8 @@ impl ExecBackend {
             args = ?rendered_args,
             passthrough = ?dctx.passthrough,
             count = dctx.inputs.len(),
-            append_inputs = self.append_inputs,
+            append_inputs,
+            append_passthrough,
             sync = dctx.sync,
             mode = dctx.mode,
             "exec dispatch"
@@ -95,6 +137,7 @@ impl ExecBackend {
             rule_name: dctx.rule_name,
             vars: dctx.vars,
             cap: dctx.cap,
+            passthrough: dctx.passthrough,
         });
         let mut tera = crate::template::new_engine();
         self.args
@@ -133,6 +176,40 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn references_input_detects_input_and_derived_vars() {
+        assert!(references_input("{{ input }}"));
+        assert!(references_input("prefix {{  input  }} suffix"));
+        assert!(references_input("--file={{ file_path }}"));
+        assert!(references_input("--stem={{ file_stem }}"));
+        assert!(references_input("--host={{ url_host }}"));
+        assert!(references_input("--query={{ url_query }}"));
+        // cap is intentionally excluded.
+        assert!(!references_input("{{ cap.1 }}"));
+        assert!(!references_input("{{ cap.name }}"));
+        // Unrelated vars.
+        assert!(!references_input("{{ group }}"));
+        assert!(!references_input("{{ rule }}"));
+        assert!(!references_input("{{ command_name }}"));
+        // Empty / literal text.
+        assert!(!references_input(""));
+        assert!(!references_input("--flag"));
+        // Filter form.
+        assert!(references_input("{{ input | upper }}"));
+    }
+
+    #[test]
+    fn references_passthrough_detects_various_forms() {
+        assert!(references_passthrough("{{ passthrough }}"));
+        assert!(references_passthrough("{{ passthrough | join(sep=' ') }}"));
+        assert!(references_passthrough(
+            "{% for p in passthrough %}{{ p }}{% endfor %}"
+        ));
+        assert!(!references_passthrough("{{ input }}"));
+        assert!(!references_passthrough("{{ cap.1 }}"));
+        assert!(!references_passthrough(""));
+    }
+
+    #[test]
     fn renders_template_args_with_file_context() {
         let backend = ExecBackend {
             command: "echo".into(),
@@ -141,7 +218,8 @@ mod tests {
                 "--ext={{ file_ext }}".into(),
             ],
             env: BTreeMap::new(),
-            append_inputs: true,
+            append_inputs: Some(true),
+            append_passthrough: None,
             gui: false,
         };
         let inputs = vec![Input::File(PathBuf::from("/tmp/hello.rs"))];

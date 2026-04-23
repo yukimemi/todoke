@@ -50,13 +50,25 @@ pub struct Target {
     pub args: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
-    /// When `true` (the default), the exec backend appends each input's
-    /// display string as a trailing positional arg after the rendered
-    /// `args` list. Set to `false` when your `args` already reference the
-    /// input via templates like `{{ input }}` / `{{ cap.N }}` and you
-    /// don't want the raw value passed again.
-    #[serde(default = "default_true")]
-    pub append_inputs: bool,
+    /// Controls whether the exec backend appends each input's display
+    /// string as a trailing positional arg after the rendered `args` list.
+    ///
+    /// - `None` / omitted (**auto**, the default): appended **unless** any
+    ///   `args` template references `{{ input }}` / `{{ file_* }}` /
+    ///   `{{ url_* }}` — in which case the trailing append is skipped so
+    ///   the same value isn't passed twice. `{{ cap.* }}` is **not** a
+    ///   signal (cap can be used for extraction unrelated to input
+    ///   reconstruction).
+    /// - `Some(true)`: force append regardless of templates.
+    /// - `Some(false)`: force skip regardless of templates.
+    #[serde(default)]
+    pub append_inputs: Option<bool>,
+    /// Controls whether passthrough-rule argv (`+42`, `-c :set …`, …) is
+    /// appended after the rendered `args` list. Same auto / true / false
+    /// semantics as [`Self::append_inputs`], but the auto trigger is
+    /// a `{{ passthrough }}` reference (any form).
+    #[serde(default)]
+    pub append_passthrough: Option<bool>,
     /// Set to `true` when the handler is a **GUI** application (neovide,
     /// nvim-qt, vscode, firefox, …). On Windows, detached spawns then use
     /// `CREATE_NO_WINDOW + DETACHED_PROCESS` instead of the default
@@ -68,10 +80,6 @@ pub struct Target {
     /// `cmd /c start` allocates.
     #[serde(default)]
     pub gui: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Target {
