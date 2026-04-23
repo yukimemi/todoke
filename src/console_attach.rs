@@ -9,18 +9,33 @@
 //!
 //! 1. `AttachConsole(ATTACH_PARENT_PROCESS)` — grab the launching
 //!    terminal's console if it has one.
-//! 2. Re-open `CONOUT$` / `CONIN$` and `SetStdHandle` them so stdio
-//!    actually points somewhere Rust's `println!` / reads can use.
+//! 2. For each standard handle that's currently **empty** (null),
+//!    re-open `CONOUT$` / `CONIN$` and wire it in with `SetStdHandle`.
 //!
-//! When launched from explorer `AttachConsole` returns 0 and this whole
-//! function is a no-op (stdio stays null — exactly what we want).
+//! The "currently empty" check is load-bearing. Shell redirection
+//! (`todoke --version > out.txt`, `todoke | clip`) leaves a real
+//! redirected handle in place even before we attach. Clobbering it
+//! would break piping and redirection — so we only touch handles that
+//! would otherwise be null.
+//!
+//! When launched from explorer `AttachConsole` returns 0 and this
+//! whole function is a no-op (stdio stays null — exactly what we want).
+//!
+//! **Call ordering is load-bearing.** Rust's `io::stdout()` /
+//! `io::stderr()` / `io::stdin()` cache the handle on first use. If
+//! anything writes to stdio *before* `attach_parent_console()` runs,
+//! the null handle gets cached and the `SetStdHandle` calls here
+//! become no-ops from Rust's perspective. `main()` invokes this as
+//! the first statement; don't introduce earlier stdio usage (panic
+//! hooks, static initializers, etc.) without re-thinking this.
 
 use std::fs::OpenOptions;
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::io::IntoRawHandle;
 
+use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Console::{
-    ATTACH_PARENT_PROCESS, AttachConsole, STD_ERROR_HANDLE, STD_HANDLE, STD_INPUT_HANDLE,
-    STD_OUTPUT_HANDLE, SetStdHandle,
+    ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_HANDLE,
+    STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
 };
 
 pub fn attach_parent_console() {
@@ -29,15 +44,23 @@ pub fn attach_parent_console() {
     if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } == 0 {
         return;
     }
-    rebind("CONOUT$", STD_OUTPUT_HANDLE, true);
-    rebind("CONOUT$", STD_ERROR_HANDLE, true);
-    rebind("CONIN$", STD_INPUT_HANDLE, false);
+    maybe_rebind("CONOUT$", STD_OUTPUT_HANDLE, true);
+    maybe_rebind("CONOUT$", STD_ERROR_HANDLE, true);
+    maybe_rebind("CONIN$", STD_INPUT_HANDLE, false);
 }
 
-/// Open the console device and wire it to one of the standard handles.
-/// The opened `File` is deliberately `mem::forget`-ed: dropping it would
-/// close the HANDLE we just gave to `SetStdHandle`.
-fn rebind(path: &str, which: STD_HANDLE, write: bool) {
+/// Re-open the console device and install it as `which` — but ONLY if
+/// `which` is currently null. A non-null existing handle means the
+/// caller redirected it (e.g. `todoke > out.txt`), and we must leave
+/// that alone.
+fn maybe_rebind(path: &str, which: STD_HANDLE, write: bool) {
+    // SAFETY: Win32 API call.
+    let existing = unsafe { GetStdHandle(which) };
+    if !existing.is_null() && existing != INVALID_HANDLE_VALUE {
+        // Redirection already in place — respect it.
+        return;
+    }
+
     let mut opts = OpenOptions::new();
     opts.read(true);
     if write {
@@ -46,10 +69,18 @@ fn rebind(path: &str, which: STD_HANDLE, write: bool) {
     let Ok(file) = opts.open(path) else {
         return;
     };
-    let handle = file.as_raw_handle();
-    // SAFETY: Win32 call, handle is a valid OS handle obtained above.
-    unsafe {
-        SetStdHandle(which, handle as _);
+
+    // Transfer ownership of the HANDLE out of `file` so its Drop won't
+    // close what we just handed to SetStdHandle. If SetStdHandle
+    // fails, we own an orphan HANDLE and must close it ourselves.
+    let handle = file.into_raw_handle();
+    // SAFETY: Win32 call; `handle` is a valid OS HANDLE we just took
+    // ownership of via IntoRawHandle.
+    let ok = unsafe { SetStdHandle(which, handle as _) };
+    if ok == 0 {
+        // SAFETY: `handle` was valid and is still owned by us.
+        unsafe {
+            CloseHandle(handle as _);
+        }
     }
-    std::mem::forget(file);
 }

@@ -23,6 +23,15 @@ use cli::{Cli, Command};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // MUST be the very first thing in main().
+    //
+    // Rust's io::stdout / io::stderr / io::stdin cache their OS handle
+    // on first use. Any stdio access before this runs would freeze the
+    // null handle in place and the SetStdHandle calls below would
+    // become no-ops for Rust's stdio. Keep this at the top; don't
+    // introduce earlier stdio writers (panic hooks, static init, etc.)
+    // without rechecking this invariant.
+    //
     // On Windows, attach to the parent terminal (if any) so logs and
     // stdout reach whoever launched us from PowerShell / cmd. When
     // launched from explorer there is no parent console — the call
