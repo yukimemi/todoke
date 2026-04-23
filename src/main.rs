@@ -1,9 +1,17 @@
+// Release builds on Windows use the "windows" subsystem so launching
+// todoke from explorer / shortcut / file association doesn't flash a
+// transient console window. Debug builds stay on the default "console"
+// subsystem to keep dev ergonomics unchanged.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 
 mod backends;
 mod cli;
 mod config;
+#[cfg(windows)]
+mod console_attach;
 mod dispatcher;
 mod input;
 mod matcher;
@@ -15,6 +23,13 @@ use cli::{Cli, Command};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // On Windows, attach to the parent terminal (if any) so logs and
+    // stdout reach whoever launched us from PowerShell / cmd. When
+    // launched from explorer there is no parent console — the call
+    // is a no-op and stdio sinks silently.
+    #[cfg(windows)]
+    console_attach::attach_parent_console();
+
     let mut cli = Cli::parse();
 
     tracing_subscriber::fmt()
