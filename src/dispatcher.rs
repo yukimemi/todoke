@@ -239,7 +239,6 @@ fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
         .unwrap_or_else(|| format!("rule[{rule_idx}]"));
 
     let mut tera = new_engine();
-    let empty_passthrough: Vec<String> = Vec::new();
     let ctx_phase2 = build_context(Context {
         input: None,
         command: "",
@@ -248,7 +247,7 @@ fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
         rule_name: &rule_name,
         vars: &cfg.raw.vars,
         cap: &cap,
-        passthrough: &empty_passthrough,
+        passthrough: &[],
     });
 
     let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx_phase2)?;

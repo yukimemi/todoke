@@ -50,6 +50,20 @@ fn references_passthrough(text: &str) -> bool {
     re.is_match(text)
 }
 
+/// True when an args array element is *exactly* `{{ passthrough }}`
+/// (with optional surrounding whitespace / strip marks, nothing else in
+/// the element). Such elements are expanded **inline** into multiple
+/// argv items — one per passthrough string — so flag + value pairs like
+/// `["-c", ":set ft=md"]` stay as two separate argv, and an empty
+/// passthrough list contributes zero args (instead of a single `""`).
+fn is_passthrough_placeholder(text: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"^\s*\{\{-?\s*passthrough\s*-?\}\}\s*$").expect("static regex")
+    });
+    re.is_match(text)
+}
+
 #[derive(Debug, Clone)]
 pub struct ExecBackend {
     pub command: String,
@@ -145,12 +159,21 @@ impl ExecBackend {
             passthrough: dctx.passthrough,
         });
         let mut tera = crate::template::new_engine();
-        self.args
-            .iter()
-            .map(|t| {
-                render(&mut tera, t, &ctx).with_context(|| format!("rendering arg template: {t}"))
-            })
-            .collect()
+        let mut out: Vec<String> = Vec::with_capacity(self.args.len());
+        for t in &self.args {
+            if is_passthrough_placeholder(t) {
+                // Inline expand: one argv per passthrough string; empty
+                // passthrough list contributes zero args.
+                for p in dctx.passthrough {
+                    out.push(p.clone());
+                }
+            } else {
+                let rendered = render(&mut tera, t, &ctx)
+                    .with_context(|| format!("rendering arg template: {t}"))?;
+                out.push(rendered);
+            }
+        }
+        Ok(out)
     }
 
     fn run_detached(&self, cmd: &mut StdCommand) -> Result<()> {
@@ -229,6 +252,26 @@ mod tests {
         // Literal text outside tags.
         assert!(!references_passthrough("--passthrough-mode=x"));
         assert!(!references_passthrough(""));
+    }
+
+    #[test]
+    fn is_passthrough_placeholder_matches_exact_forms_only() {
+        // Exact placeholder (possibly whitespace / strip marks).
+        assert!(is_passthrough_placeholder("{{ passthrough }}"));
+        assert!(is_passthrough_placeholder("{{passthrough}}"));
+        assert!(is_passthrough_placeholder("  {{ passthrough }}  "));
+        assert!(is_passthrough_placeholder("{{- passthrough -}}"));
+        assert!(is_passthrough_placeholder("{{-passthrough-}}"));
+        // NOT a placeholder — has extra content.
+        assert!(!is_passthrough_placeholder(
+            "{{ passthrough | join(sep=' ') }}"
+        ));
+        assert!(!is_passthrough_placeholder("prefix {{ passthrough }}"));
+        assert!(!is_passthrough_placeholder("{{ passthrough }} suffix"));
+        assert!(!is_passthrough_placeholder("{% for p in passthrough %}"));
+        // Not matching.
+        assert!(!is_passthrough_placeholder("{{ input }}"));
+        assert!(!is_passthrough_placeholder(""));
     }
 
     #[test]

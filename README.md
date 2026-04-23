@@ -369,7 +369,7 @@ gui = true
 [todoke.gvim.args]
 default = [
   "--servername", "{{ group | upper }}",
-  "{{ passthrough | join(sep=' ') }}",
+  "{{ passthrough }}",                      # ← expanded inline, one argv per entry
   "--remote-silent", "{{ input }}",
 ]
 
@@ -385,11 +385,19 @@ match = '.*'
 to = "gvim"
 ```
 
-`{{ input }}` is referenced in `args`, so `append_inputs` auto-suppresses
-the trailing append. `{{ passthrough | join(sep=' ') }}` references
-`passthrough`, so `append_passthrough` also auto-suppresses. Result:
-`gvim --servername DEFAULT +42 --remote-silent foo.txt` — exactly what
-gvim expects, no double-paste.
+An args element that is *exactly* `{{ passthrough }}` (with optional
+surrounding whitespace / strip marks) is **expanded inline** — one
+argv per passthrough string. So `[-c, :set ft=md]` stays two argv,
+and an empty passthrough list contributes zero args (no literal `""`
+floating around). `{{ input }}` is also referenced, so `append_inputs`
+auto-suppresses the trailing append. Result: `gvim --servername
+DEFAULT -c :set ft=md --remote-silent foo.txt` — exactly what gvim
+expects, no double-paste, no empty-argv cruft.
+
+(If you specifically want a joined string you can still write
+`"{{ passthrough | join(sep=' ') }}"` — that path goes through the
+normal single-argv render. Use the bare `{{ passthrough }}` element
+when you want proper argv expansion, which is what gvim et al. need.)
 
 ### As `$EDITOR`
 
