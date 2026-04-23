@@ -44,6 +44,11 @@ pub struct Context<'a> {
     /// Capture groups from the matched rule's regex; keyed by index
     /// (`"0"`, `"1"`, …) and by name. Empty when no capture / no match.
     pub cap: &'a crate::matcher::CaptureMap,
+    /// Raw argv strings from passthrough rules in this batch. Exposed in
+    /// Tera as `{{ passthrough }}` (an array — use `{{ passthrough | join(sep=' ') }}`
+    /// to stringify). Referencing it in any args template auto-suppresses
+    /// the trailing append (see `[todoke.<name>]` → `append_passthrough`).
+    pub passthrough: &'a [String],
 }
 
 fn strip_verbatim_str(s: &str) -> String {
@@ -182,6 +187,10 @@ pub fn build_context(c: Context<'_>) -> tera::Context {
     let cap_map: HashMap<String, String> = c.cap.clone().into_iter().collect();
     ctx.insert("cap", &cap_map);
 
+    // passthrough is an array. Use `{{ passthrough | join(sep=' ') }}` to
+    // inline it, or iterate with `{% for p in passthrough %}`.
+    ctx.insert("passthrough", c.passthrough);
+
     ctx
 }
 
@@ -192,6 +201,7 @@ mod tests {
 
     fn build(input: Option<&Input>, vars: &BTreeMap<String, toml::Value>) -> tera::Context {
         let cap = BTreeMap::new();
+        let passthrough: Vec<String> = Vec::new();
         build_context(Context {
             input,
             command: "",
@@ -200,6 +210,7 @@ mod tests {
             rule_name: "",
             vars,
             cap: &cap,
+            passthrough: &passthrough,
         })
     }
 
@@ -261,6 +272,7 @@ mod tests {
         cap.insert("0".into(), "issue:42".into());
         cap.insert("1".into(), "42".into());
         cap.insert("id".into(), "42".into());
+        let passthrough: Vec<String> = Vec::new();
         let ctx = build_context(Context {
             input: None,
             command: "",
@@ -269,6 +281,7 @@ mod tests {
             rule_name: "",
             vars: &BTreeMap::new(),
             cap: &cap,
+            passthrough: &passthrough,
         });
         let mut tera = new_engine();
         let out = render(&mut tera, "{{ cap.0 }} / {{ cap.1 }} / {{ cap.id }}", &ctx).unwrap();

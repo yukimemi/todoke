@@ -354,6 +354,51 @@ default = ["{{ cap.pre | default(value='') | trim }}"]
 `joined` when you want a single regex describing the full invocation
 shape; use `passthrough` when each flag has its own rule.
 
+### Recipe: gvim server reuse with flag passthrough
+
+gvim has built-in `--servername` / `--remote-silent` — the vim-era
+cousin of neovim's `--listen`/msgpack-RPC. A single `kind = "exec"`
+target can re-use a gvim server per group and place passthrough flags
+**before** the `--remote-silent <file>` chunk so gvim doesn't treat
+them as extra filenames:
+
+```toml
+[todoke.gvim]
+command = "gvim"
+gui = true
+[todoke.gvim.args]
+default = [
+  "--servername", "{{ group | upper }}",
+  "{{ passthrough }}",                      # ← expanded inline, one argv per entry
+  "--remote-silent", "{{ input }}",
+]
+
+[[rules]]
+name = "vim-flag"
+match = '^[-+]'
+to = "gvim"
+passthrough = true
+
+[[rules]]
+name = "default"
+match = '.*'
+to = "gvim"
+```
+
+An args element that is *exactly* `{{ passthrough }}` (with optional
+surrounding whitespace / strip marks) is **expanded inline** — one
+argv per passthrough string. So `[-c, :set ft=md]` stays two argv,
+and an empty passthrough list contributes zero args (no literal `""`
+floating around). `{{ input }}` is also referenced, so `append_inputs`
+auto-suppresses the trailing append. Result: `gvim --servername
+DEFAULT -c :set ft=md --remote-silent foo.txt` — exactly what gvim
+expects, no double-paste, no empty-argv cruft.
+
+(If you specifically want a joined string you can still write
+`"{{ passthrough | join(sep=' ') }}"` — that path goes through the
+normal single-argv render. Use the bare `{{ passthrough }}` element
+when you want proper argv expansion, which is what gvim et al. need.)
+
 ### As `$EDITOR`
 
 ```sh
@@ -400,7 +445,8 @@ A delivery target (the value behind a rule's `to = "<name>"`).
 | `command`  | string                              | yes      | the handler binary (PATH-resolved)                              |
 | `listen`   | string                              | neovim   | socket / named pipe path for RPC                                |
 | `args`     | table of `<mode>` → `array<string>` | no       | args injected based on `rule.mode`; `args.default` is the fallback when no key matches |
-| `append_inputs` | bool                           | `true`   | `exec` kind only: whether each input's display string is appended as a trailing positional arg after `args`. Set to `false` when `args` already reference the input via `{{ input }}` / `{{ cap.N }}` and you don't want the raw value passed twice. |
+| `append_inputs` | bool (optional)                | **auto** | `exec` kind only. `None` / omitted = **auto**: append each input's display string to the end of argv unless any `args` template references `{{ input }}` / `{{ file_* }}` / `{{ url_* }}` (cap is intentionally ignored). `true` = force append. `false` = force skip. |
+| `append_passthrough` | bool (optional)           | **auto** | `exec` kind only. Same auto / true / false semantics as `append_inputs`, but keyed on `{{ passthrough }}` references in `args`. When you reference `{{ passthrough \| join(sep=' ') }}` to place flag-argv in a specific spot, the auto-append is suppressed so the values aren't pasted twice. |
 | `env`      | table                               | no       | env vars passed to the spawned handler                          |
 | `gui`      | bool                                | `false`  | Windows only (no-op on Unix): when `true`, detached spawns use `CREATE_NO_WINDOW + DETACHED_PROCESS` instead of `cmd /c start`, so no transient cmd window flashes before the GUI appears. Set to `true` for GUI handlers (`neovide`, `nvim-qt`, `code`, `firefox`, …) and leave `false` for terminal / TUI handlers that need a fresh console (`nvim` in a new window, `helix`, …). |
 
@@ -449,6 +495,7 @@ Available in `rule.group`, `rule.to`, `todoke.*.command`, `todoke.*.listen`,
 | `cap.0`         | full match of the `match` regex     | when a rule matched |
 | `cap.1` / `cap.2` / … | numbered capture groups       | when defined        |
 | `cap.<name>`    | named capture groups `(?P<name>…)`  | when defined        |
+| `passthrough`   | array of raw argv strings from passthrough rules in the batch (`["+42", "-c", ":set ft=md"]`). Render with `{{ passthrough \| join(sep=' ') }}`, iterate via `{% for p in passthrough %}{{ p }}{% endfor %}`. Auto-suppresses the trailing append when referenced (see `append_passthrough`). | always (empty array when no passthrough) |
 | `vars.<key>`    | your `[vars]` entries               | always        |
 | `env.<KEY>`     | process env at todoke invocation    | always        |
 
