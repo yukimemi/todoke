@@ -99,23 +99,35 @@ pub async fn doctor(cli: &Cli) -> Result<()> {
 
     for (i, rule) in cfg.raw.rules.iter().enumerate() {
         let name = rule.name.as_deref().unwrap_or("<unnamed>");
-        if !rule.to.contains("{{") && !rule.to.contains("{%") {
-            if !cfg.raw.todoke.contains_key(&rule.to) {
+        match rule.to.as_deref() {
+            None => {
                 println!(
-                    "{} {}: to {} is not defined in [todoke.*]",
-                    styled("error", level_error()),
+                    "{}  {}: no {} — {} rule, merges into another rule's batch by group",
+                    styled("info", level_info()),
                     styled(format!("rule[{i}] ({name})"), bold()),
-                    styled(format!("'{}'", rule.to), accent()),
+                    styled("to", accent()),
+                    styled("passthrough", dim()),
                 );
-                issues += 1;
             }
-        } else {
-            println!(
-                "{}  {}: to {} is a Tera template, resolved at dispatch time",
-                styled("info", level_info()),
-                styled(format!("rule[{i}] ({name})"), bold()),
-                styled(format!("'{}'", rule.to), accent()),
-            );
+            Some(to) if !to.contains("{{") && !to.contains("{%") => {
+                if !cfg.raw.todoke.contains_key(to) {
+                    println!(
+                        "{} {}: to {} is not defined in [todoke.*]",
+                        styled("error", level_error()),
+                        styled(format!("rule[{i}] ({name})"), bold()),
+                        styled(format!("'{to}'"), accent()),
+                    );
+                    issues += 1;
+                }
+            }
+            Some(to) => {
+                println!(
+                    "{}  {}: to {} is a Tera template, resolved at dispatch time",
+                    styled("info", level_info()),
+                    styled(format!("rule[{i}] ({name})"), bold()),
+                    styled(format!("'{to}'"), accent()),
+                );
+            }
         }
     }
 
@@ -251,7 +263,9 @@ fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
     });
 
     let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx_phase2)?;
-    let target_name = resolve_target_name(cli, rule, &mut tera, &ctx_phase2)?;
+    let target_name = resolve_target_name(cli, rule, &mut tera, &ctx_phase2)?.ok_or_else(|| {
+        anyhow!("no-args rule must have `to` (validation should have caught this)")
+    })?;
 
     Ok(vec![Batch {
         target_name,
@@ -376,7 +390,9 @@ fn plan_batches(
         });
 
         let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx)?;
-        let target_name = resolve_target_name(cli, rule, &mut tera, &ctx)?;
+        let target_name = resolve_target_name(cli, rule, &mut tera, &ctx)?.ok_or_else(|| {
+            anyhow!("non-passthrough rule must have `to` (validation should have caught this)")
+        })?;
 
         let key = BatchKey {
             target: target_name.clone(),
@@ -417,41 +433,85 @@ fn plan_batches(
             passthrough: &[],
         });
         let group = resolve_group_with_ctx(cli, rule, &mut tera, &ctx)?;
-        let target_name = resolve_target_name(cli, rule, &mut tera, &ctx)?;
+        let target_name_opt = resolve_target_name(cli, rule, &mut tera, &ctx)?;
 
-        let matching_key = groups
-            .keys()
-            .find(|k| k.target == target_name && k.group == group)
-            .cloned();
-
-        let key = match matching_key {
-            Some(k) => {
-                let batch = groups.get(&k).expect("key came from groups");
-                if batch.mode != rule.mode || batch.sync != rule.sync {
-                    warn!(
-                        rule = %rule_name,
-                        batch_rule = %batch.rule_name,
-                        target = %target_name,
-                        group = %group,
-                        batch_mode = %batch.mode,
-                        batch_sync = batch.sync,
-                        rule_mode = %rule.mode,
-                        rule_sync = rule.sync,
-                        "passthrough rule's mode/sync differs from the batch it's attaching to; batch values win",
-                    );
+        // Two flavors of passthrough merge:
+        //
+        // (a) `to` is specified — find/create a batch with matching
+        //     (target, group). Fall back to a standalone passthrough batch
+        //     if none exists.
+        // (b) `to` is omitted — the rule is a "pure collector". Find ANY
+        //     batch whose group matches and merge there. If none exists,
+        //     drop the passthrough with a warning (no fallback batch).
+        //     If multiple group-matching batches exist, merge into the
+        //     first (BTreeMap order) and warn about the ambiguity.
+        let key = match &target_name_opt {
+            Some(target_name) => {
+                let matching_key = groups
+                    .keys()
+                    .find(|k| k.target == *target_name && k.group == group)
+                    .cloned();
+                match matching_key {
+                    Some(k) => {
+                        let batch = groups.get(&k).expect("key came from groups");
+                        if batch.mode != rule.mode || batch.sync != rule.sync {
+                            warn!(
+                                rule = %rule_name,
+                                batch_rule = %batch.rule_name,
+                                target = %target_name,
+                                group = %group,
+                                batch_mode = %batch.mode,
+                                batch_sync = batch.sync,
+                                rule_mode = %rule.mode,
+                                rule_sync = rule.sync,
+                                "passthrough rule's mode/sync differs from the batch it's attaching to; batch values win",
+                            );
+                        }
+                        k
+                    }
+                    None => BatchKey {
+                        target: target_name.clone(),
+                        group: group.clone(),
+                        mode: rule.mode.clone(),
+                        sync: rule.sync,
+                    },
                 }
-                k
             }
-            None => BatchKey {
-                target: target_name.clone(),
-                group: group.clone(),
-                mode: rule.mode.clone(),
-                sync: rule.sync,
-            },
+            None => {
+                // `to`-less: merge by group only.
+                let candidates: Vec<BatchKey> = groups
+                    .keys()
+                    .filter(|k| k.group == group)
+                    .cloned()
+                    .collect();
+                match candidates.len() {
+                    0 => {
+                        warn!(
+                            rule = %rule_name,
+                            group = %group,
+                            dropped = ?consumed,
+                            "passthrough rule has no `to` and no batch in this group — dropping argv",
+                        );
+                        continue;
+                    }
+                    1 => candidates.into_iter().next().unwrap(),
+                    n => {
+                        let first = candidates.into_iter().next().unwrap();
+                        warn!(
+                            rule = %rule_name,
+                            group = %group,
+                            candidates = n,
+                            chosen_target = %first.target,
+                            "passthrough rule has no `to` and multiple batches in this group; merging into first — set `to` explicitly to disambiguate",
+                        );
+                        first
+                    }
+                }
+            }
         };
 
         let batch = groups.entry(key).or_insert_with(|| Batch {
-            target_name: target_name.clone(),
+            target_name: target_name_opt.clone().unwrap_or_default(),
             group: group.clone(),
             mode: rule.mode.clone(),
             sync: rule.sync,
@@ -514,7 +574,9 @@ fn build_joined_batch(
         passthrough: &[],
     });
     let group = resolve_group_with_ctx(cli, rule, tera, &ctx)?;
-    let target_name = resolve_target_name(cli, rule, tera, &ctx)?;
+    let target_name = resolve_target_name(cli, rule, tera, &ctx)?.ok_or_else(|| {
+        anyhow!("joined rule must have `to` (validation should have caught this)")
+    })?;
 
     Ok(vec![Batch {
         target_name,
@@ -571,16 +633,25 @@ fn resolve_group_with_ctx(
     }
 }
 
+/// `Ok(Some(name))` when a target is selected (CLI override or rendered
+/// `rule.to`). `Ok(None)` only for `passthrough = true` rules that omit
+/// `to` — the caller (Phase 2b) is responsible for picking a merge-target
+/// by group.
 fn resolve_target_name(
     cli: &Cli,
     rule: &Rule,
     tera: &mut tera::Tera,
     ctx: &tera::Context,
-) -> Result<String> {
+) -> Result<Option<String>> {
     if let Some(e) = cli.editor.clone() {
-        return Ok(e);
+        return Ok(Some(e));
     }
-    render(tera, &rule.to, ctx).context("rendering rule.to template")
+    match &rule.to {
+        None => Ok(None),
+        Some(tmpl) => render(tera, tmpl, ctx)
+            .context("rendering rule.to template")
+            .map(Some),
+    }
 }
 
 async fn run_plan(cfg: &ResolvedConfig, plan: Vec<Batch>) -> Result<()> {
