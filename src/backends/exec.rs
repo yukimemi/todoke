@@ -24,23 +24,28 @@ use crate::matcher::CaptureMap;
 use crate::platform;
 use crate::template::{Context, build_context, render};
 
-/// True when the joined args text references `{{ input }}` or any of the
-/// input-derived context vars (`file_*`, `url_*`). `cap.*` is intentionally
-/// excluded — captures are ambiguous enough that their presence can't be
-/// taken as proof of input reconstruction.
+/// True when any Tera tag (`{{ … }}` or `{% … %}`, including
+/// whitespace-stripping `{{- … -}}` / `{%- … -%}`) references `input` or
+/// any input-derived context var (`file_*`, `url_*`). `cap.*` is
+/// intentionally excluded — captures are ambiguous enough that their
+/// presence can't be taken as proof of input reconstruction.
 fn references_input(text: &str) -> bool {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re =
-        RE.get_or_init(|| Regex::new(r"\{\{\s*(input|file_\w+|url_\w+)\b").expect("static regex"));
+    let re = RE.get_or_init(|| {
+        Regex::new(r"\{[{%]-?[^{}]*?\b(input|file_\w+|url_\w+)\b[^{}]*?-?[%}]\}")
+            .expect("static regex")
+    });
     re.is_match(text)
 }
 
-/// True when the joined args text references `{{ passthrough }}` in any
-/// form (standalone, filtered, iterated).
+/// True when any Tera tag references `passthrough` — standalone
+/// (`{{ passthrough }}`), filtered (`{{ passthrough | join(...) }}`),
+/// iterated (`{% for p in passthrough %}`), or conditional
+/// (`{% if passthrough %}`). Covers whitespace-stripping tags too.
 fn references_passthrough(text: &str) -> bool {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        Regex::new(r"\{\{\s*passthrough\b|\bfor\s+\w+\s+in\s+passthrough\b").expect("static regex")
+        Regex::new(r"\{[{%]-?[^{}]*?\bpassthrough\b[^{}]*?-?[%}]\}").expect("static regex")
     });
     re.is_match(text)
 }
@@ -177,12 +182,20 @@ mod tests {
 
     #[test]
     fn references_input_detects_input_and_derived_vars() {
+        // Standard expression tags.
         assert!(references_input("{{ input }}"));
         assert!(references_input("prefix {{  input  }} suffix"));
         assert!(references_input("--file={{ file_path }}"));
         assert!(references_input("--stem={{ file_stem }}"));
         assert!(references_input("--host={{ url_host }}"));
         assert!(references_input("--query={{ url_query }}"));
+        assert!(references_input("{{ input | upper }}"));
+        // Whitespace-stripping tags.
+        assert!(references_input("{{- input -}}"));
+        assert!(references_input("{{- file_path }}"));
+        // Block tags.
+        assert!(references_input("{% if input %}yes{% endif %}"));
+        assert!(references_input("{% if file_path != '' %}y{% endif %}"));
         // cap is intentionally excluded.
         assert!(!references_input("{{ cap.1 }}"));
         assert!(!references_input("{{ cap.name }}"));
@@ -190,22 +203,31 @@ mod tests {
         assert!(!references_input("{{ group }}"));
         assert!(!references_input("{{ rule }}"));
         assert!(!references_input("{{ command_name }}"));
-        // Empty / literal text.
+        // Literal text that happens to contain the word but outside any tag.
+        assert!(!references_input("--input-file"));
+        assert!(!references_input("pass an input here"));
+        // Empty.
         assert!(!references_input(""));
         assert!(!references_input("--flag"));
-        // Filter form.
-        assert!(references_input("{{ input | upper }}"));
     }
 
     #[test]
     fn references_passthrough_detects_various_forms() {
+        // Standard expression tags.
         assert!(references_passthrough("{{ passthrough }}"));
         assert!(references_passthrough("{{ passthrough | join(sep=' ') }}"));
+        // Whitespace-stripping.
+        assert!(references_passthrough("{{- passthrough -}}"));
+        // Block tags — conditionals and loops.
         assert!(references_passthrough(
             "{% for p in passthrough %}{{ p }}{% endfor %}"
         ));
+        assert!(references_passthrough("{% if passthrough %}yes{% endif %}"));
+        // Unrelated.
         assert!(!references_passthrough("{{ input }}"));
         assert!(!references_passthrough("{{ cap.1 }}"));
+        // Literal text outside tags.
+        assert!(!references_passthrough("--passthrough-mode=x"));
         assert!(!references_passthrough(""));
     }
 
