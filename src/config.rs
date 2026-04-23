@@ -115,7 +115,19 @@ pub struct Rule {
     pub exclude: Option<StringOrVec>,
     /// Name of a `[todoke.<name>]` entry to deliver the matched input to.
     /// Tera-templated — `to = "{{ vars.gui }}"` works.
-    pub to: String,
+    ///
+    /// **Optional only for `passthrough = true` rules.** A passthrough
+    /// rule with no `to` acts as "collect argv, let another rule decide
+    /// the target": at Phase 2b, the passthrough is merged into the
+    /// already-built batch that shares its resolved `group` (target
+    /// isn't required to match). If no such batch exists, the
+    /// passthrough is dropped with a warning. Useful for generic flag
+    /// rules like `match = '^[-+]'` that should ride along with whoever
+    /// the other rules decided to deliver to.
+    ///
+    /// Normal (non-passthrough) rules and joined rules still require `to`.
+    #[serde(default)]
+    pub to: Option<String>,
     #[serde(default)]
     pub group: Option<String>,
     /// Free-form mode string. For `kind = "neovim"` the reserved values
@@ -283,16 +295,28 @@ impl ResolvedConfig {
                     rule.name.as_deref().unwrap_or("<unnamed>"),
                 ));
             }
-            if is_template(&rule.to) {
-                continue;
-            }
-            if !raw.todoke.contains_key(&rule.to) {
-                return Err(anyhow!(
-                    "rule[{i}] ({}) references unknown todoke target '{}'. Known targets: {}",
-                    rule.name.as_deref().unwrap_or("<unnamed>"),
-                    rule.to,
-                    raw.todoke.keys().cloned().collect::<Vec<_>>().join(", ")
-                ));
+            match &rule.to {
+                None => {
+                    if !rule.passthrough {
+                        return Err(anyhow!(
+                            "rule[{i}] ({}) has no `to` — only `passthrough = true` rules may omit it (they merge into another rule's batch)",
+                            rule.name.as_deref().unwrap_or("<unnamed>"),
+                        ));
+                    }
+                }
+                Some(to) => {
+                    if is_template(to) {
+                        continue;
+                    }
+                    if !raw.todoke.contains_key(to) {
+                        return Err(anyhow!(
+                            "rule[{i}] ({}) references unknown todoke target '{}'. Known targets: {}",
+                            rule.name.as_deref().unwrap_or("<unnamed>"),
+                            to,
+                            raw.todoke.keys().cloned().collect::<Vec<_>>().join(", ")
+                        ));
+                    }
+                }
             }
         }
 
@@ -620,6 +644,35 @@ mod tests {
         "#;
         let err = load_from_str(text).unwrap_err();
         assert!(err.to_string().contains("consumes_until"), "got: {err}");
+    }
+
+    #[test]
+    fn passthrough_rule_can_omit_to() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            name = "any-flag"
+            match = '^-'
+            passthrough = true
+        "#;
+        let cfg = load_from_str(text).expect("passthrough rule should allow omitted `to`");
+        assert!(cfg.raw.rules[0].to.is_none());
+    }
+
+    #[test]
+    fn non_passthrough_rule_requires_to() {
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            name = "orphan"
+            match = '.*'
+        "#;
+        let err = load_from_str(text).unwrap_err();
+        assert!(err.to_string().contains("has no `to`"), "got: {err}");
     }
 
     #[test]

@@ -267,12 +267,13 @@ a file path. Two ways to handle it:
 **Option A — `passthrough`** (simple; good for individual flag classes):
 
 ```toml
+# Generic flag catcher — no `to` because it just collects argv; the
+# target is decided by whichever *other* rule matches the input(s) in
+# the same group.
 [[rules]]
-name = "nvim-flag"
+name = "any-flag"
 match = '^[-+]'          # matches against the RAW argv, pre auto-detect
-to = "nvim-term"
-sync = true
-passthrough = true       # forward as-is to nvim's start-up argv
+passthrough = true
 
 [[rules]]
 name = "nvim-file"
@@ -282,7 +283,11 @@ sync = true
 ```
 
 `todoke +42 foo.txt bar.txt` now spawns `nvim +42 foo.txt bar.txt`
-(multi-file still works, `+42` rides along as a flag). For spaced
+(multi-file still works, `+42` rides along as a flag into the
+nvim-term batch). The flag rule is also target-agnostic — if you add
+another rule routing some inputs to a `code` target with the same
+group, `+42` will also ride into that batch. If `+42` arrives with no
+matching input batch in its group, it's dropped with a warning. For spaced
 values like `-c :set ft=md` where the flag and its value are separate
 argv items, use `consumes` to pull the next argv along:
 
@@ -457,7 +462,7 @@ A delivery target (the value behind a rule's `to = "<name>"`).
 | `name`    | string                    | `rule[N]`    | human-readable label (shown in `check`)      |
 | `match`   | regex string or `[regex]` | required     | pattern(s) matched against a string derived from the input: **file** = canonicalized absolute path with `/` separators (`\\?\` verbatim prefix stripped), **url** = the URL string as-is, **raw** = the argument string as-is. Anchors like `^foo$` only fire for the URL/raw cases unless you design the regex for absolute paths. |
 | `exclude` | regex string or `[regex]` | none         | when any `exclude` hits, the rule is skipped even if `match` hits — todoke falls through to the next rule |
-| `to`      | string (Tera-templated)   | required     | key into `[todoke.*]`                        |
+| `to`      | string (Tera-templated)   | required / optional | key into `[todoke.*]`. Required for normal and joined rules. **Optional for `passthrough = true` rules** — when omitted, the passthrough merges into any existing batch that shares its resolved `group` (target-agnostic), and is dropped with a warning if no such batch exists. Use for generic flag rules that should ride along with whoever else handles the input. |
 | `group`   | string                    | `"default"`  | instance identity (one nvim per group)       |
 | `mode`    | string                    | `"remote"`   | free-form; `"remote"` / `"new"` are reserved for neovim behavior, otherwise used only to pick `args.<mode>` |
 | `sync`    | bool                      | `false`      | `true` = block until handler exits           |

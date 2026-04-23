@@ -20,13 +20,20 @@ fn write_file(path: &Path, contents: &str) {
 }
 
 fn temp_dir() -> PathBuf {
+    // Windows' SystemTime has ~100ns resolution, and cargo test runs
+    // integration tests in parallel. Nanos alone collided on CI and let
+    // one test's config overwrite another's. Atomic counter + pid makes
+    // it deterministically unique without needing a uuid dep.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let base = std::env::temp_dir().join("todoke-test");
-    // unique-ish per test via nano timestamp
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let d = base.join(stamp.to_string());
+    let pid = std::process::id();
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let d = base.join(format!("{stamp}-{pid}-{seq}"));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
