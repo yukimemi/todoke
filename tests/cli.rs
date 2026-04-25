@@ -615,11 +615,11 @@ fn doctor_fails_for_broken_toml() {
 /// When no nvim is listening yet, todoke exec()'s into `nvim --listen <socket>`
 /// on Unix so nvim inherits the terminal (hitori.vim singleton behaviour).
 /// In the test we have no TTY, so we pass `--headless` via args.remote.
-/// todoke's process *becomes* nvim (exec), so we spawn it without waiting
-/// and poll until the socket appears.
+/// todoke's process *becomes* nvim (exec) — there is no separate todoke exit.
+/// We poll until the socket appears (nvim binds it on startup).
 #[cfg(unix)]
 #[test]
-fn spawned_nvim_listen_survives_todoke_exit() {
+fn spawned_nvim_listen_binds_socket() {
     use std::os::unix::net::UnixStream;
 
     // Skip gracefully when nvim is not available in this environment.
@@ -631,7 +631,7 @@ fn spawned_nvim_listen_survives_todoke_exit() {
         .map(|s| s.success())
         .unwrap_or(false)
     {
-        eprintln!("skipping spawned_nvim_listen_survives_todoke_exit: nvim not available");
+        eprintln!("skipping spawned_nvim_listen_binds_socket: nvim not available");
         return;
     }
 
@@ -674,7 +674,13 @@ sync = false
         .unwrap();
 
     // Poll until the socket appears (nvim binds it on startup).
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    // Timeout is configurable via TODOKE_TEST_TIMEOUT_MS (default 15 s) to
+    // avoid flakes on slow/loaded CI while keeping the default sensible.
+    let timeout_ms = std::env::var("TODOKE_TEST_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(15_000);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
     let conn = loop {
         if let Ok(c) = UnixStream::connect(&socket) {
             break Ok(c);

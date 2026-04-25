@@ -4,7 +4,7 @@
 //!
 //! | mode    | sync  | behavior                                                     |
 //! |---------|-------|--------------------------------------------------------------|
-//! | remote  | false | connect to listen pipe; on fail, spawn detached with --listen |
+//! | remote  | false | connect to listen pipe; on fail, exec/spawn nvim with --listen |
 //! | new     | false | always spawn detached (no --listen)                           |
 //! | new     | true  | spawn as child, wait for exit, propagate exit code            |
 //! | remote  | true  | falls back to `new + true` with a warning (v0.2 TODO)         |
@@ -55,7 +55,7 @@ pub struct NeovimBackend {
     /// remote-mode dispatches can't forward these to an already-running
     /// nvim (the RPC session is long past start-up), so `dispatch_remote`
     /// warns and drops them. Spawn paths (`new`, or remote fallback
-    /// `spawn_detached_with_listen`) honor them.
+    /// `start_with_listen`) honor them.
     pub passthrough: Vec<String>,
     /// Flagged by the caller when the `command` is a GUI front-end
     /// (neovide, nvim-qt). Controls the detached-spawn code path on Windows.
