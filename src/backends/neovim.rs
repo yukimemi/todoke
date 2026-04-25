@@ -64,6 +64,10 @@ pub struct NeovimBackend {
     /// `exec(2)` replaces the entire process — if more batches follow, they
     /// would never run. The dispatcher threads this flag so exec() is only
     /// used when it is safe (single-batch or last-batch scenarios).
+    ///
+    /// Only consumed inside `#[cfg(unix)]` paths; on Windows the field is
+    /// always written but never read, so silence the dead-code lint there.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub can_exec: bool,
 }
 
