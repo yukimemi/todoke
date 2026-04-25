@@ -53,9 +53,9 @@ async fn main() -> Result<()> {
         None => dispatcher::dispatch(&cli, &cli.files).await,
         Some(Command::List { alive_only }) => dispatcher::list(alive_only).await,
         Some(Command::Kill { group, all }) => dispatcher::kill(group.as_deref(), all).await,
-        Some(Command::Check { files }) => dispatcher::check(&cli, &files).await,
+        Some(Command::Check { inputs }) => dispatcher::check(&cli, &inputs).await,
         Some(Command::Doctor) => dispatcher::doctor(&cli).await,
-        Some(Command::Config(sub)) => cli::config::run(sub).await,
+        Some(Command::Config(sub)) => cli::config::run(sub, cli.config.as_deref()).await,
         Some(Command::Completion { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "todoke", &mut std::io::stdout());
             Ok(())

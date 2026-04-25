@@ -83,11 +83,7 @@ fn no_args_uses_default_rule() {
         "#,
     );
 
-    let (ok, out, err) = run_with(&[
-        "--todoke-config",
-        &config.to_string_lossy(),
-        "--todoke-dry-run",
-    ]);
+    let (ok, out, err) = run_with(&["--todoke-config", &config.to_string_lossy(), "check"]);
     assert!(ok, "stderr: {err}");
     assert!(out.contains("to=echo"), "stdout: {out}");
     assert!(out.contains("rule=default"), "stdout: {out}");
@@ -179,7 +175,7 @@ fn gnu_posix_argument_syntax_parses_end_to_end() {
     // positional is that hyphen-shaped argv (`-f`, `+42`, `-sfoo`, …)
     // flow through as positionals without escape.
     let run_dry = |extra: &[&str]| -> String {
-        let mut args: Vec<&str> = vec!["--todoke-config", &cfg_str, "--todoke-dry-run"];
+        let mut args: Vec<&str> = vec!["--todoke-config", &cfg_str, "check"];
         args.extend_from_slice(extra);
         let (ok, out, err) = run_with(&args);
         assert!(ok, "failed for {extra:?}: stderr: {err}");
@@ -306,11 +302,7 @@ fn no_args_no_rules_errors() {
         "#,
     );
 
-    let (ok, _out, err) = run_with(&[
-        "--todoke-config",
-        &config.to_string_lossy(),
-        "--todoke-dry-run",
-    ]);
+    let (ok, _out, err) = run_with(&["--todoke-config", &config.to_string_lossy(), "check"]);
     assert!(!ok);
     assert!(err.contains("no rule matches empty-args"), "stderr: {err}");
 }
@@ -351,7 +343,7 @@ fn dry_run_plans_default_rule() {
     let (ok, out, err) = run_with(&[
         "--todoke-config",
         &config.to_string_lossy(),
-        "--todoke-dry-run",
+        "check",
         &file.to_string_lossy(),
     ]);
     assert!(ok, "stderr: {err}");
@@ -423,7 +415,7 @@ fn invalid_config_reports_error() {
     let (ok, _out, err) = run_with(&[
         "--todoke-config",
         &config.to_string_lossy(),
-        "--todoke-dry-run",
+        "check",
         &file.to_string_lossy(),
     ]);
     assert!(!ok);
@@ -448,9 +440,172 @@ fn unknown_to_reference_reports_error() {
     let (ok, _out, err) = run_with(&[
         "--todoke-config",
         &config.to_string_lossy(),
-        "--todoke-dry-run",
+        "check",
         &file.to_string_lossy(),
     ]);
     assert!(!ok);
     assert!(err.contains("unknown todoke target"), "stderr: {err}");
+}
+
+// --- `config` subcommand ---
+
+#[test]
+fn config_path_prints_explicit_override() {
+    let dir = temp_dir();
+    let config = dir.join("custom.toml");
+    let (ok, out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "config",
+        "path",
+    ]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.trim_end().ends_with("custom.toml"), "stdout: {out}");
+}
+
+#[test]
+fn config_show_prints_embedded_default_when_no_file() {
+    let dir = temp_dir();
+    let config = dir.join("missing.toml");
+    let (ok, out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "config",
+        "show",
+    ]);
+    assert!(ok, "stderr: {err}");
+    // sanity-check anchors from the bundled default.toml
+    assert!(out.contains("[todoke.nvim]"), "stdout: {out}");
+    assert!(out.contains("editor-callback"), "stdout: {out}");
+}
+
+#[test]
+fn config_show_prints_user_file_contents() {
+    let dir = temp_dir();
+    let config = dir.join("todoke.toml");
+    let body = "# my custom config\n[todoke.code]\ncommand = \"code\"\n";
+    write_file(&config, body);
+    let (ok, out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "config",
+        "show",
+    ]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.contains("# my custom config"), "stdout: {out}");
+    assert!(out.contains("[todoke.code]"), "stdout: {out}");
+}
+
+#[test]
+fn config_show_rendered_runs_tera() {
+    let dir = temp_dir();
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        r#"
+            [vars]
+            gui = "neovide"
+
+            [todoke.gui]
+            command = "{{ vars.gui }}"
+
+            [[rules]]
+            match = ".*"
+            to = "gui"
+        "#,
+    );
+    let (ok, out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "config",
+        "show",
+        "--rendered",
+    ]);
+    assert!(ok, "stderr: {err}");
+    assert!(
+        out.contains("command = \"neovide\""),
+        "expected rendered Tera output, got: {out}"
+    );
+    // The pre-rendered form must not survive --rendered.
+    assert!(
+        !out.contains("{{ vars.gui }}"),
+        "stdout still has raw Tera tag: {out}"
+    );
+}
+
+#[test]
+fn config_init_writes_default_when_missing() {
+    let dir = temp_dir();
+    let config = dir.join("subdir").join("todoke.toml");
+    assert!(!config.exists());
+
+    let (ok, out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "config",
+        "init",
+    ]);
+    assert!(ok, "stderr: {err}");
+    assert!(config.exists(), "config file should have been created");
+    let written = std::fs::read_to_string(&config).unwrap();
+    assert!(written.contains("[todoke.nvim]"), "wrote: {written}");
+    assert!(out.contains("todoke.toml"), "stdout: {out}");
+    assert!(
+        err.contains("wrote default config"),
+        "stderr should announce the write: {err}"
+    );
+}
+
+#[test]
+fn config_init_is_idempotent() {
+    let dir = temp_dir();
+    let config = dir.join("todoke.toml");
+    write_file(&config, "# preserved by user\n");
+
+    let (ok, _out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "config",
+        "init",
+    ]);
+    assert!(ok, "stderr: {err}");
+    let after = std::fs::read_to_string(&config).unwrap();
+    assert_eq!(after, "# preserved by user\n");
+    assert!(
+        !err.contains("wrote default config"),
+        "should not announce a write when the file already exists: {err}"
+    );
+}
+
+// --- `doctor` subcommand ---
+
+#[test]
+fn doctor_succeeds_for_user_file() {
+    let dir = temp_dir();
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        r#"
+            [todoke.echo]
+            command = "echo"
+
+            [[rules]]
+            name = "default"
+            match = ".*"
+            to = "echo"
+        "#,
+    );
+    let (ok, out, err) = run_with(&["--todoke-config", &config.to_string_lossy(), "doctor"]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.contains("no issues"), "stdout: {out}");
+}
+
+#[test]
+fn doctor_fails_for_broken_toml() {
+    let dir = temp_dir();
+    let config = dir.join("bad.toml");
+    write_file(&config, "this is not valid toml [[[");
+    let (ok, _out, err) = run_with(&["--todoke-config", &config.to_string_lossy(), "doctor"]);
+    assert!(!ok);
+    assert!(err.contains("failed to parse TOML"), "stderr: {err}");
 }

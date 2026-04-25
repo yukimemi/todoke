@@ -1373,7 +1373,7 @@ dependencies = [
 
 [[package]]
 name = "todoke"
-version = "1.4.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1383,6 +1383,7 @@ dependencies = [
  "owo-colors",
  "regex",
  "serde",
+ "shlex",
  "supports-color",
  "tera",
  "thiserror",

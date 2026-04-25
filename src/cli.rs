@@ -46,11 +46,11 @@ pub struct Cli {
     pub config: Option<PathBuf>,
 
     #[arg(
-        long = "todoke-editor",
+        long = "todoke-to",
         value_name = "NAME",
-        help = "Bypass rules, force handler"
+        help = "Bypass rules, force the target (entry under [todoke.<name>])"
     )]
-    pub editor: Option<String>,
+    pub to: Option<String>,
 
     #[arg(
         long = "todoke-group",
@@ -66,12 +66,6 @@ pub struct Cli {
         help = "Force how each argument is classified (skip auto-detection)"
     )]
     pub as_kind: Option<InputKind>,
-
-    #[arg(
-        long = "todoke-dry-run",
-        help = "Resolve rules and log decisions without dispatching"
-    )]
-    pub dry_run: bool,
 
     #[arg(
         long = "todoke-verbose",
@@ -115,10 +109,17 @@ pub enum Command {
         all: bool,
     },
 
-    #[command(about = "Dry-run: show which rule matches each file without dispatching")]
+    #[command(about = "Dry-run: show the dispatch plan for the given inputs without executing")]
     Check {
-        #[arg(value_name = "FILES", required = true)]
-        files: Vec<PathBuf>,
+        // Same shape as the top-level positional: hyphen-shaped argv
+        // (`-f`, `+42`, `-sfoo`, …) must flow through as inputs without
+        // clap treating them as flags to `check` itself.
+        #[arg(
+            value_name = "INPUTS",
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        inputs: Vec<PathBuf>,
     },
 
     #[command(

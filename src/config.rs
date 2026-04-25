@@ -451,7 +451,7 @@ pub fn load_from_str(text: &str) -> Result<ResolvedConfig> {
 ///   as self-referential strings (`"{{ group }}"`) so those tokens pass
 ///   through pre-render unchanged and get rendered later with real values in
 ///   [`crate::dispatcher`].
-fn prerender(text: &str) -> Result<String> {
+pub fn prerender(text: &str) -> Result<String> {
     let vars = extract_vars(text);
 
     let mut tera = crate::template::new_engine();

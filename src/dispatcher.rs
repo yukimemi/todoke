@@ -31,11 +31,6 @@ pub async fn dispatch(cli: &Cli, files: &[PathBuf]) -> Result<()> {
 
     debug!(batches = plan.len(), "dispatch plan built");
 
-    if cli.dry_run {
-        print_plan(&plan);
-        return Ok(());
-    }
-
     run_plan(&cfg, plan).await
 }
 
@@ -43,7 +38,11 @@ pub async fn check(cli: &Cli, files: &[PathBuf]) -> Result<()> {
     let cfg = config::load(cli.config.as_deref())?;
     let raws = raw_argv(files);
     let inputs = load_inputs(cli, files)?;
-    let plan = plan_batches(cli, &cfg, &inputs, &raws)?;
+    let plan = if inputs.is_empty() {
+        plan_no_args(cli, &cfg)?
+    } else {
+        plan_batches(cli, &cfg, &inputs, &raws)?
+    };
     print_plan(&plan);
     Ok(())
 }
@@ -232,8 +231,7 @@ fn plan_no_args(cli: &Cli, cfg: &ResolvedConfig) -> Result<Vec<Batch>> {
     let (rule_idx, cap) = match hit {
         Some((i, c)) => (Some(i), c),
         None => {
-            let fallback =
-                (cli.editor.is_some() || cli.group.is_some()) && !cfg.raw.rules.is_empty();
+            let fallback = (cli.to.is_some() || cli.group.is_some()) && !cfg.raw.rules.is_empty();
             (fallback.then_some(0), CaptureMap::new())
         }
     };
@@ -604,10 +602,10 @@ fn resolve_rule<'a>(
     subject: &str,
     kind: InputKind,
 ) -> Result<Option<(usize, &'a Rule, CaptureMap)>> {
-    if cli.editor.is_some() || cli.group.is_some() {
+    if cli.to.is_some() || cli.group.is_some() {
         if cfg.raw.rules.is_empty() {
             bail!(
-                "--editor/--group requires at least one [[rules]] in config for mode/sync defaults"
+                "--todoke-to/--todoke-group requires at least one [[rules]] in config for mode/sync defaults"
             );
         }
         if let Some((idx, cap)) = first_match(cfg, subject, Some(kind)) {
@@ -643,8 +641,8 @@ fn resolve_target_name(
     tera: &mut tera::Tera,
     ctx: &tera::Context,
 ) -> Result<Option<String>> {
-    if let Some(e) = cli.editor.clone() {
-        return Ok(Some(e));
+    if let Some(t) = cli.to.clone() {
+        return Ok(Some(t));
     }
     match &rule.to {
         None => Ok(None),
