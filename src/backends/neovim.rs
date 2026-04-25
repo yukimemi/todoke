@@ -60,6 +60,11 @@ pub struct NeovimBackend {
     /// Flagged by the caller when the `command` is a GUI front-end
     /// (neovide, nvim-qt). Controls the detached-spawn code path on Windows.
     pub gui: bool,
+    /// Set to `true` only when this dispatch is the last batch in the plan.
+    /// `exec(2)` replaces the entire process — if more batches follow, they
+    /// would never run. The dispatcher threads this flag so exec() is only
+    /// used when it is safe (single-batch or last-batch scenarios).
+    pub can_exec: bool,
 }
 
 impl NeovimBackend {
@@ -140,12 +145,14 @@ impl NeovimBackend {
         cmd.arg("--listen").arg(&self.listen);
 
         #[cfg(unix)]
-        if !self.gui {
+        if !self.gui && self.can_exec {
             use std::os::unix::process::CommandExt;
             // exec() replaces this process with nvim. The tokio runtime is
-            // abandoned — safe because all dispatch work is done. nvim inherits
-            // the calling terminal as a foreground process, exactly like
-            // hitori.vim's singleton behaviour.
+            // abandoned — safe only when this is the last (or only) batch in
+            // the plan. The dispatcher sets can_exec = true only then, so
+            // multi-batch invocations fall through to spawn_detached instead.
+            // nvim inherits the calling terminal as a foreground process,
+            // exactly like hitori.vim's singleton behaviour.
             let err = cmd.exec();
             return Err(anyhow::Error::from(err)
                 .context(format!("failed to exec {}", self.command)));
