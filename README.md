@@ -179,9 +179,6 @@ todoke --todoke-as raw HEAD # → firefox opens the repo tree at HEAD
 # See which rule would match, without actually dispatching
 todoke check notes.md https://example.com issue:42
 
-# Same dispatch logic, don't execute
-todoke --todoke-dry-run notes.md
-
 # Lint the config for common footguns
 todoke doctor
 ```
@@ -520,37 +517,38 @@ and rule sections, and all other stock [Tera features][tera].
 ## CLI reference
 
 ```
-todoke [FILES]...            # dispatch files per rules (default action)
-todoke check <FILES>...      # dry-run: show matched rule per file
+todoke [INPUTS]...           # dispatch inputs per rules (default action)
+todoke check [INPUTS]...     # dry-run: show the dispatch plan without executing
 todoke doctor                # lint the config for common footguns
+todoke list                  # list alive handler instances (NOT IMPLEMENTED YET)
+todoke kill <group> | --all  # terminate instances             (NOT IMPLEMENTED YET)
+todoke config path           # print the resolved config file path
+todoke config init           # write the embedded default config if missing (idempotent)
+todoke config edit           # open the config in $EDITOR (writes the default first if missing)
+todoke config show           # print the loaded config TOML (--rendered for post-Tera)
 todoke completion <shell>    # emit shell completion script
 todoke --help
 todoke --version
-
-# v0.2+:
-todoke list                    # list alive handler instances
-todoke kill <group> | --all    # terminate instances
-todoke config path | edit | validate | show
 ```
 
 Flags (all long-only and `--todoke-` prefixed so they don't collide with
 flags the downstream tool expects):
 
 - `--todoke-config <PATH>` — override config path
-- `--todoke-editor <NAME>` — bypass rule, force handler
+- `--todoke-to <NAME>`     — bypass rule, force the target (entry under `[todoke.<name>]`)
 - `--todoke-group <NAME>`  — bypass rule, force group
 - `--todoke-as <KIND>`     — force input classification (`file` / `url` / `raw`)
-- `--todoke-dry-run`       — print the resolved plan without executing
 - `--todoke-verbose`       — repeat for more verbosity (info / debug / trace)
 
 Positional args are collected with `trailing_var_arg = true` +
-`allow_hyphen_values = true`, so `-c :set ft=md` / `+42` / `-abc` flow
+`allow_hyphen_values = true` (on both the top-level dispatch form and
+the `check` subcommand), so `-c :set ft=md` / `+42` / `-abc` flow
 straight through to whichever passthrough / normal rule matches — no
 `--` separator required. Trade-off: **todoke's own flags must precede
-the inputs** (e.g. `todoke --todoke-dry-run +42 foo.txt`); flags
-written after the first input get absorbed as positional. That's the
-right shape for `$EDITOR` callers, who never inject todoke flags
-after inputs.
+the inputs** (e.g. `todoke --todoke-to nvim +42 foo.txt`, or
+`todoke check +42 foo.txt`); flags written after the first input get
+absorbed as positional. That's the right shape for `$EDITOR` callers,
+who never inject todoke flags after inputs.
 
 clap still consumes the `--` end-of-options marker itself, so if a
 downstream tool *requires* a literal `--` in its argv, pass it some
@@ -560,14 +558,25 @@ Logging is also controllable via `RUST_LOG`.
 
 ## Roadmap
 
-- **v0.1** *(this release)*: core dispatch, neovim + generic backends,
-  `check`, `doctor`, `completion`, default config, `$EDITOR`
-  compatibility, colored output.
-- **v0.2**: `list` / `kill` / `config edit|validate|show`, `open` / `send`,
-  neovim `remote + sync` via `nvim_buf_attach`.
-- **v0.3**: `script` editor kind — run arbitrary shell commands as a
-  handler, turning todoke into a general "open with rules" tool for any
-  file type (previewer, formatter, pipeline, …).
+Shipped (v2.0.0):
+
+- core dispatch, neovim + generic exec backends, `$EDITOR` compatibility,
+  Windows file-association support, colored output
+- `check` (dry-run dispatch plan), `doctor` (config static analysis),
+  `completion`
+- full `config` subcommand surface — `path` / `init` / `edit` / `show`
+- breaking CLI cleanup vs. the v1.x line — see the v2.0.0 release notes
+
+Planned:
+
+- `list` / `kill` — currently stubbed (`bail!("not implemented yet")`);
+  list alive nvim instances and terminate them by group
+- neovim `remote + sync` via `nvim_buf_attach` — block on a reused
+  nvim until the user closes the buffer (currently only fresh-spawn
+  nvim supports `sync = true`)
+- `script` target kind — invoke arbitrary shell commands as a handler,
+  turning todoke into a general "open with rules" tool for previewers,
+  formatters, pipelines, …
 
 ## License
 
