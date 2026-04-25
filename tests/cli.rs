@@ -622,6 +622,19 @@ fn doctor_fails_for_broken_toml() {
 fn spawned_nvim_listen_survives_todoke_exit() {
     use std::os::unix::net::UnixStream;
 
+    // Skip gracefully when nvim is not available in this environment.
+    if !Command::new("nvim")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        eprintln!("skipping spawned_nvim_listen_survives_todoke_exit: nvim not available");
+        return;
+    }
+
     let dir = temp_dir();
     let socket = dir.join("test.sock");
     let config = dir.join("todoke.toml");
@@ -650,12 +663,13 @@ sync = false
     );
 
     // todoke exec()'s into nvim, so this child handle refers to nvim itself.
+    // Capture stderr so assertion failures include nvim's diagnostic output.
     let mut child = Command::new(bin())
         .args(["--todoke-config", &config.to_string_lossy()])
         .args(["--", "somefile.txt"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
 
@@ -671,12 +685,16 @@ sync = false
         std::thread::sleep(std::time::Duration::from_millis(100));
     };
 
-    // Kill nvim (the exec'd process) before asserting.
+    // Kill nvim (the exec'd process) and collect stderr before asserting.
     child.kill().ok();
-    child.wait().ok();
+    let stderr_bytes = child
+        .wait_with_output()
+        .map(|o| o.stderr)
+        .unwrap_or_default();
+    let stderr = String::from_utf8_lossy(&stderr_bytes);
 
     assert!(
         conn.is_ok(),
-        "nvim should be listening on the socket after todoke exec'd into it"
+        "nvim exited after todoke returned — socket not connectable\nstderr: {stderr}"
     );
 }
