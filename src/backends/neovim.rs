@@ -115,14 +115,18 @@ impl NeovimBackend {
                 Ok(())
             }
             Err(e) => {
-                info!(pipe = %self.listen, reason = %e, "no listener; spawning detached nvim");
-                self.spawn_detached_with_listen(files)
+                info!(pipe = %self.listen, reason = %e, "no listener; starting nvim with --listen");
+                self.start_with_listen(files)
             }
         }
     }
 
     /// Argv layout: `command <passthrough>... FILES... <args_remote>... --listen LISTEN`.
-    fn spawn_detached_with_listen(&self, files: &[PathBuf]) -> Result<()> {
+    ///
+    /// On Unix with a non-GUI command, this replaces the current process via
+    /// `exec` so nvim inherits the terminal as a foreground process (no SIGTTOU).
+    /// On Windows or GUI targets, falls back to a detached spawn.
+    fn start_with_listen(&self, files: &[PathBuf]) -> Result<()> {
         let mut cmd = StdCommand::new(&self.command);
         for p in &self.passthrough {
             cmd.arg(p);
@@ -134,6 +138,19 @@ impl NeovimBackend {
             cmd.arg(a);
         }
         cmd.arg("--listen").arg(&self.listen);
+
+        #[cfg(unix)]
+        if !self.gui {
+            use std::os::unix::process::CommandExt;
+            // exec() replaces this process with nvim. The tokio runtime is
+            // abandoned — safe because all dispatch work is done. nvim inherits
+            // the calling terminal as a foreground process, exactly like
+            // hitori.vim's singleton behaviour.
+            let err = cmd.exec();
+            return Err(anyhow::Error::from(err)
+                .context(format!("failed to exec {}", self.command)));
+        }
+
         platform::spawn_detached(
             &mut cmd,
             self.gui,

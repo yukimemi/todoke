@@ -609,3 +609,74 @@ fn doctor_fails_for_broken_toml() {
     assert!(!ok);
     assert!(err.contains("failed to parse TOML"), "stderr: {err}");
 }
+
+// --- neovim backend: spawn_detached_with_listen ---
+
+/// When no nvim is listening yet, todoke exec()'s into `nvim --listen <socket>`
+/// on Unix so nvim inherits the terminal (hitori.vim singleton behaviour).
+/// In the test we have no TTY, so we pass `--headless` via args.remote.
+/// todoke's process *becomes* nvim (exec), so we spawn it without waiting
+/// and poll until the socket appears.
+#[cfg(unix)]
+#[test]
+fn spawned_nvim_listen_survives_todoke_exit() {
+    use std::os::unix::net::UnixStream;
+
+    let dir = temp_dir();
+    let socket = dir.join("test.sock");
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        &format!(
+            r#"
+[todoke.nvim]
+kind = "neovim"
+command = "nvim"
+listen = "{sock}"
+
+[todoke.nvim.args]
+remote = ["--headless"]
+
+[[rules]]
+name = "default"
+match = ".*"
+to = "nvim"
+group = "default"
+mode = "remote"
+sync = false
+"#,
+            sock = socket.display()
+        ),
+    );
+
+    // todoke exec()'s into nvim, so this child handle refers to nvim itself.
+    let mut child = Command::new(bin())
+        .args(["--todoke-config", &config.to_string_lossy()])
+        .args(["--", "somefile.txt"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    // Poll until the socket appears (nvim binds it on startup).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let conn = loop {
+        if let Ok(c) = UnixStream::connect(&socket) {
+            break Ok(c);
+        }
+        if std::time::Instant::now() > deadline {
+            break Err(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+
+    // Kill nvim (the exec'd process) before asserting.
+    child.kill().ok();
+    child.wait().ok();
+
+    assert!(
+        conn.is_ok(),
+        "nvim should be listening on the socket after todoke exec'd into it"
+    );
+}
