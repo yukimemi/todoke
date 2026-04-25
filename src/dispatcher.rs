@@ -653,9 +653,11 @@ fn resolve_target_name(
 }
 
 async fn run_plan(cfg: &ResolvedConfig, plan: Vec<Batch>) -> Result<()> {
+    let total = plan.len();
     let mut had_err = false;
-    for batch in plan {
-        if let Err(e) = run_batch(cfg, &batch).await {
+    for (i, batch) in plan.into_iter().enumerate() {
+        let is_last = i + 1 == total;
+        if let Err(e) = run_batch(cfg, &batch, is_last).await {
             had_err = true;
             tracing::error!(
                 target = %batch.target_name,
@@ -671,7 +673,7 @@ async fn run_plan(cfg: &ResolvedConfig, plan: Vec<Batch>) -> Result<()> {
     Ok(())
 }
 
-async fn run_batch(cfg: &ResolvedConfig, batch: &Batch) -> Result<()> {
+async fn run_batch(cfg: &ResolvedConfig, batch: &Batch, is_last: bool) -> Result<()> {
     let target = cfg.target(&batch.target_name)?;
     let cwd = std::env::current_dir()
         .context("cwd")?
@@ -697,7 +699,16 @@ async fn run_batch(cfg: &ResolvedConfig, batch: &Batch) -> Result<()> {
 
     match target.kind {
         TargetKind::Neovim => {
-            run_neovim(target, &command, &rendered_args, batch, &mut tera, &ctx).await
+            run_neovim(
+                target,
+                &command,
+                &rendered_args,
+                batch,
+                &mut tera,
+                &ctx,
+                is_last,
+            )
+            .await
         }
         TargetKind::Exec => run_exec(target, &command, &rendered_args, batch, &cwd, &cfg.raw.vars),
     }
@@ -710,6 +721,7 @@ async fn run_neovim(
     batch: &Batch,
     tera: &mut tera::Tera,
     ctx: &tera::Context,
+    is_last: bool,
 ) -> Result<()> {
     let listen_tmpl = target.listen.as_deref().ok_or_else(|| {
         anyhow!(
@@ -751,6 +763,7 @@ async fn run_neovim(
         args_new,
         passthrough: batch.passthrough_inputs.clone(),
         gui: target.gui,
+        can_exec: is_last,
     };
     backend.dispatch(&files, &batch.mode, batch.sync).await
 }

@@ -609,3 +609,98 @@ fn doctor_fails_for_broken_toml() {
     assert!(!ok);
     assert!(err.contains("failed to parse TOML"), "stderr: {err}");
 }
+
+// --- neovim backend: spawn_detached_with_listen ---
+
+/// When no nvim is listening yet, todoke exec()'s into `nvim --listen <socket>`
+/// on Unix so nvim inherits the terminal (hitori.vim singleton behaviour).
+/// In the test we have no TTY, so we pass `--headless` via args.remote.
+/// todoke's process *becomes* nvim (exec) — there is no separate todoke exit.
+/// We poll until the socket appears (nvim binds it on startup).
+#[cfg(unix)]
+#[test]
+fn spawned_nvim_listen_binds_socket() {
+    use std::os::unix::net::UnixStream;
+
+    // Skip gracefully when nvim is not available in this environment.
+    if !Command::new("nvim")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        eprintln!("skipping spawned_nvim_listen_binds_socket: nvim not available");
+        return;
+    }
+
+    let dir = temp_dir();
+    let socket = dir.join("test.sock");
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        &format!(
+            r#"
+[todoke.nvim]
+kind = "neovim"
+command = "nvim"
+listen = "{sock}"
+
+[todoke.nvim.args]
+remote = ["--headless"]
+
+[[rules]]
+name = "default"
+match = ".*"
+to = "nvim"
+group = "default"
+mode = "remote"
+sync = false
+"#,
+            sock = socket.display()
+        ),
+    );
+
+    // todoke exec()'s into nvim, so this child handle refers to nvim itself.
+    // Capture stderr so assertion failures include nvim's diagnostic output.
+    let mut child = Command::new(bin())
+        .args(["--todoke-config", &config.to_string_lossy()])
+        .args(["--", "somefile.txt"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Poll until the socket appears (nvim binds it on startup).
+    // Timeout is configurable via TODOKE_TEST_TIMEOUT_MS (default 15 s) to
+    // avoid flakes on slow/loaded CI while keeping the default sensible.
+    let timeout_ms = std::env::var("TODOKE_TEST_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(15_000);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    let conn = loop {
+        if let Ok(c) = UnixStream::connect(&socket) {
+            break Ok(c);
+        }
+        if std::time::Instant::now() > deadline {
+            break Err(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+
+    // Kill nvim (the exec'd process) and collect stderr before asserting.
+    child.kill().ok();
+    let stderr_bytes = child
+        .wait_with_output()
+        .map(|o| o.stderr)
+        .unwrap_or_default();
+    let stderr = String::from_utf8_lossy(&stderr_bytes);
+
+    assert!(
+        conn.is_ok(),
+        "nvim exited after todoke returned — socket not connectable\nstderr: {stderr}"
+    );
+}

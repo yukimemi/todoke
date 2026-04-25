@@ -4,7 +4,7 @@
 //!
 //! | mode    | sync  | behavior                                                     |
 //! |---------|-------|--------------------------------------------------------------|
-//! | remote  | false | connect to listen pipe; on fail, spawn detached with --listen |
+//! | remote  | false | connect to listen pipe; on fail, exec/spawn nvim with --listen |
 //! | new     | false | always spawn detached (no --listen)                           |
 //! | new     | true  | spawn as child, wait for exit, propagate exit code            |
 //! | remote  | true  | falls back to `new + true` with a warning (v0.2 TODO)         |
@@ -55,11 +55,16 @@ pub struct NeovimBackend {
     /// remote-mode dispatches can't forward these to an already-running
     /// nvim (the RPC session is long past start-up), so `dispatch_remote`
     /// warns and drops them. Spawn paths (`new`, or remote fallback
-    /// `spawn_detached_with_listen`) honor them.
+    /// `start_with_listen`) honor them.
     pub passthrough: Vec<String>,
     /// Flagged by the caller when the `command` is a GUI front-end
     /// (neovide, nvim-qt). Controls the detached-spawn code path on Windows.
     pub gui: bool,
+    /// Set to `true` only when this dispatch is the last batch in the plan.
+    /// `exec(2)` replaces the entire process — if more batches follow, they
+    /// would never run. The dispatcher threads this flag so exec() is only
+    /// used when it is safe (single-batch or last-batch scenarios).
+    pub can_exec: bool,
 }
 
 impl NeovimBackend {
@@ -115,14 +120,18 @@ impl NeovimBackend {
                 Ok(())
             }
             Err(e) => {
-                info!(pipe = %self.listen, reason = %e, "no listener; spawning detached nvim");
-                self.spawn_detached_with_listen(files)
+                info!(pipe = %self.listen, reason = %e, "no listener; starting nvim with --listen");
+                self.start_with_listen(files)
             }
         }
     }
 
     /// Argv layout: `command <passthrough>... FILES... <args_remote>... --listen LISTEN`.
-    fn spawn_detached_with_listen(&self, files: &[PathBuf]) -> Result<()> {
+    ///
+    /// On Unix with a non-GUI command, this replaces the current process via
+    /// `exec` so nvim inherits the terminal as a foreground process (no SIGTTOU).
+    /// On Windows or GUI targets, falls back to a detached spawn.
+    fn start_with_listen(&self, files: &[PathBuf]) -> Result<()> {
         let mut cmd = StdCommand::new(&self.command);
         for p in &self.passthrough {
             cmd.arg(p);
@@ -134,6 +143,22 @@ impl NeovimBackend {
             cmd.arg(a);
         }
         cmd.arg("--listen").arg(&self.listen);
+
+        #[cfg(unix)]
+        if !self.gui && self.can_exec {
+            use std::os::unix::process::CommandExt;
+            // exec() replaces this process with nvim. The tokio runtime is
+            // abandoned — safe only when this is the last (or only) batch in
+            // the plan. The dispatcher sets can_exec = true only then, so
+            // multi-batch invocations fall through to spawn_detached instead.
+            // nvim inherits the calling terminal as a foreground process,
+            // exactly like hitori.vim's singleton behaviour.
+            let err = cmd.exec();
+            return Err(
+                anyhow::Error::from(err).context(format!("failed to exec {}", self.command))
+            );
+        }
+
         platform::spawn_detached(
             &mut cmd,
             self.gui,
