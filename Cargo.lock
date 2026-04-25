@@ -1383,6 +1383,7 @@ dependencies = [
  "owo-colors",
  "regex",
  "serde",
+ "shlex",
  "supports-color",
  "tera",
  "thiserror",

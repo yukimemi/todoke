@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::Path;
 use std::process::Command as StdCommand;
 
@@ -57,13 +58,17 @@ fn edit(explicit_config: Option<&Path>) -> Result<()> {
     }
 
     let editor = pick_editor();
-    let mut parts = editor.split_whitespace();
-    let cmd = parts
-        .next()
+    // POSIX-style shell tokenization handles quoted paths with spaces
+    // (`"C:\Program Files\.../Code.exe" --wait`) and embedded args
+    // (`code --wait`, `nvim -p`) uniformly. Unquoted paths with spaces are
+    // unrepresentable in $EDITOR — same constraint git-core imposes.
+    let parts = shlex::split(&editor)
+        .ok_or_else(|| anyhow!("editor command has unbalanced quotes: {editor}"))?;
+    let (cmd, extra) = parts
+        .split_first()
         .ok_or_else(|| anyhow!("no editor configured; set $EDITOR or $VISUAL"))?;
-    let extra: Vec<&str> = parts.collect();
     let status = StdCommand::new(cmd)
-        .args(&extra)
+        .args(extra)
         .arg(&path)
         .status()
         .with_context(|| format!("failed to spawn editor `{editor}` for {}", path.display()))?;
@@ -101,10 +106,13 @@ fn show(explicit_config: Option<&Path>, rendered: bool) -> Result<()> {
 ///
 /// Creates parent directories as needed. Never overwrites an existing file —
 /// the user's edits stay intact even if the embedded default has drifted.
+///
+/// Atomicity: the write goes through `OpenOptions::create_new`, so the
+/// "exists check" and the "create" are a single OS-level operation. A
+/// concurrent process that creates the file between our check and our open
+/// loses to `AlreadyExists`, and we report `Ok(false)` instead of clobbering
+/// their content.
 pub fn ensure_config_exists(path: &Path) -> Result<bool> {
-    if path.exists() {
-        return Ok(false);
-    }
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).with_context(|| {
@@ -112,7 +120,20 @@ pub fn ensure_config_exists(path: &Path) -> Result<bool> {
             })?;
         }
     }
-    std::fs::write(path, config::DEFAULT_CONFIG_TOML)
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!("failed to open config file for writing: {}", path.display())
+            });
+        }
+    };
+    file.write_all(config::DEFAULT_CONFIG_TOML.as_bytes())
         .with_context(|| format!("failed to write default config to: {}", path.display()))?;
     Ok(true)
 }
