@@ -521,7 +521,7 @@ todoke [INPUTS]...           # dispatch inputs per rules (default action)
 todoke check [INPUTS]...     # dry-run: show the dispatch plan without executing
 todoke doctor                # lint the config for common footguns
 todoke list                  # list alive handler instances (NOT IMPLEMENTED YET)
-todoke kill <group> | --all  # terminate instances             (NOT IMPLEMENTED YET)
+todoke kill <group> | --all  # terminate instances (NOT IMPLEMENTED YET)
 todoke config path           # print the resolved config file path
 todoke config init           # write the embedded default config if missing (idempotent)
 todoke config edit           # open the config in $EDITOR (writes the default first if missing)
