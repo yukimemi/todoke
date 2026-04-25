@@ -154,8 +154,9 @@ impl NeovimBackend {
             // nvim inherits the calling terminal as a foreground process,
             // exactly like hitori.vim's singleton behaviour.
             let err = cmd.exec();
-            return Err(anyhow::Error::from(err)
-                .context(format!("failed to exec {}", self.command)));
+            return Err(
+                anyhow::Error::from(err).context(format!("failed to exec {}", self.command))
+            );
         }
 
         platform::spawn_detached(

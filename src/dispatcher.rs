@@ -699,7 +699,16 @@ async fn run_batch(cfg: &ResolvedConfig, batch: &Batch, is_last: bool) -> Result
 
     match target.kind {
         TargetKind::Neovim => {
-            run_neovim(target, &command, &rendered_args, batch, &mut tera, &ctx, is_last).await
+            run_neovim(
+                target,
+                &command,
+                &rendered_args,
+                batch,
+                &mut tera,
+                &ctx,
+                is_last,
+            )
+            .await
         }
         TargetKind::Exec => run_exec(target, &command, &rendered_args, batch, &cwd, &cfg.raw.vars),
     }
