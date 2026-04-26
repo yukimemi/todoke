@@ -15,18 +15,22 @@ listen = '{% if is_windows() %}\\.\pipe\nvim-todoke-{{ group }}{% else %}/tmp/nv
 
 # git commit / rebase, AI-tool prompt temp files etc. — always a fresh
 # nvim, block until it exits so the calling tool (git, gemini-cli,
-# claude-code, …) reads the edited file. Gemini CLI prompt files only
-# match when todoke is invoked as a `vim`-named alias (see README); see
-# the README for the rationale.
+# claude-code, …) reads the edited file. Gemini CLI only spawns the
+# editor for prompt files when it recognises the binary as a vim-family
+# name, so the gemini-edit branch only fires when todoke is invoked under
+# the `todoke-vim` alias — see README. The patterns below pin the
+# `claude-prompt-` / `gemini-edit-` shape to the basename so a project
+# directory named `gemini-edit-clone/` doesn't accidentally route as a
+# prompt file.
 [[rules]]
 name = "editor-callback"
 match = [
   # git / svn / hg commit + rebase + tag edit messages
   '(?i)/(COMMIT_EDITMSG|MERGE_MSG|TAG_EDITMSG|EDIT_DESCRIPTION|git-rebase-todo|\.gitmessage|NOTES_EDITMSG|svn-commit\.tmp)$',
-  # Claude Code prompt temp files
-  '(?i)/claude-prompt-.*$',
+  # Claude Code prompt temp files (basename starts with claude-prompt-)
+  '(?i)/claude-prompt-[^/]+$',
   # Gemini CLI prompt temp files (mkdtemp `gemini-edit-XXXX/buffer.txt`)
-  '(?i)/gemini-edit.*$',
+  '(?i)/gemini-edit-[^/]+/buffer\.txt$',
 ]
 to = "nvim"
 mode = "new"

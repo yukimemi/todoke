@@ -371,6 +371,31 @@ mod tests {
     }
 
     #[test]
+    fn default_config_does_not_misroute_project_dirs_named_like_prompts() {
+        // Files inside project directories whose name starts with
+        // `claude-prompt-` / `gemini-edit-` must NOT route through
+        // editor-callback (mode=new, sync=true). They should fall through
+        // to the catch-all `default` rule.
+        let cfg = load_from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
+        for path in [
+            "/home/me/projects/claude-prompt-clone/src/main.rs",
+            "/home/me/projects/gemini-edit-clone/notes.md",
+            // Gemini CLI's basename must be exactly `buffer.txt` — a
+            // file with a different name inside such a dir is a project
+            // file, not a prompt artifact.
+            "/tmp/gemini-edit-abc123/other.txt",
+        ] {
+            let idx =
+                first_match_idx(&cfg, path).unwrap_or_else(|| panic!("no rule matched {path}"));
+            assert_eq!(
+                cfg.rule(idx).name.as_deref(),
+                Some("default"),
+                "{path} should fall through to default, not editor-callback",
+            );
+        }
+    }
+
+    #[test]
     fn default_config_passthrough_catches_nvim_value_flag() {
         let cfg = load_from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
         // -i is what gemini-cli injects in front of the file path; the
