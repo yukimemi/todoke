@@ -419,6 +419,49 @@ paths like `newfile.txt` or `/tmp/new.md`. So `todoke Makefile` and
 — rules match against the absolute path and the editor creates the
 file on write.
 
+#### Gemini CLI: use the `todoke-vim` alias
+
+Google's [gemini-cli][gemini-cli] picks the spawn strategy for `$EDITOR`
+by substring-matching the executable name against
+`vi`/`vim`/`nvim`/`emacs`/`hx`/`nano`. Anything else (including
+`todoke`) is treated as non-terminal: gemini-cli spawns it
+asynchronously and keeps its own Ink TUI re-rendering on top, so
+the editor never gets a clean screen and the terminal looks frozen.
+
+Workaround: invoke todoke under a name that contains one of those
+substrings. The release artifacts ship `todoke-vim` next to `todoke`
+for exactly this — point gemini-cli at the alias:
+
+```sh
+# Linux / macOS
+export VISUAL=todoke-vim   # gemini-cli prefers VISUAL over EDITOR
+
+# Windows (PowerShell)
+$env:VISUAL = "todoke-vim"
+```
+
+`cargo install todoke` only installs `todoke`, so cargo users need to
+create the alias themselves:
+
+```sh
+# Linux / macOS
+ln -sf "$(command -v todoke)" ~/.cargo/bin/todoke-vim
+
+# Windows (PowerShell)
+Copy-Item (Get-Command todoke).Source "$env:USERPROFILE\.cargo\bin\todoke-vim.exe"
+```
+
+todoke ignores `argv[0]`, so a copy or symlink behaves identically to
+the canonical binary. Setting `VISUAL` (rather than overriding
+`EDITOR`) keeps `EDITOR=todoke` working for every other caller.
+Gemini-cli also injects `-i NONE` ahead of the file path when it
+recognises a vim-family editor — the bundled default config has a
+`nvim-value-flag` passthrough rule (`-i`/`-c`/`-S`/… plus their
+spaced value) so the pair reaches nvim intact, and a matching
+`editor-callback` entry for `gemini-edit-*/buffer.txt` so the dispatch
+runs `mode = "new", sync = true` and gemini-cli reads the edited
+result.
+
 ### As OS default program (Windows)
 
 Right-click a `.txt` → Open with → Choose another app → Browse → point at
@@ -583,3 +626,4 @@ Planned:
 [MIT](./LICENSE) — © 2026 yukimemi.
 
 [tera]: https://keats.github.io/tera/docs/#built-ins
+[gemini-cli]: https://github.com/google-gemini/gemini-cli

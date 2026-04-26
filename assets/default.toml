@@ -13,14 +13,52 @@ kind = "neovim"
 command = "nvim"
 listen = '{% if is_windows() %}\\.\pipe\nvim-todoke-{{ group }}{% else %}/tmp/nvim-todoke-{{ group }}.sock{% endif %}'
 
-# git commit, rebase todo, merge messages etc. — always a fresh nvim, block
-# until it exits so callers like `git commit` see the result.
+# git commit / rebase, AI-tool prompt temp files etc. — always a fresh
+# nvim, block until it exits so the calling tool (git, gemini-cli,
+# claude-code, …) reads the edited file. Gemini CLI prompt files only
+# match when todoke is invoked as a `vim`-named alias (see README); see
+# the README for the rationale.
 [[rules]]
 name = "editor-callback"
-match = '(?i)/(COMMIT_EDITMSG|MERGE_MSG|TAG_EDITMSG|EDIT_DESCRIPTION|git-rebase-todo|\.gitmessage|NOTES_EDITMSG|svn-commit\.tmp)$'
+match = [
+  # git / svn / hg commit + rebase + tag edit messages
+  '(?i)/(COMMIT_EDITMSG|MERGE_MSG|TAG_EDITMSG|EDIT_DESCRIPTION|git-rebase-todo|\.gitmessage|NOTES_EDITMSG|svn-commit\.tmp)$',
+  # Claude Code prompt temp files
+  '(?i)/claude-prompt-.*$',
+  # Gemini CLI prompt temp files (mkdtemp `gemini-edit-XXXX/buffer.txt`)
+  '(?i)/gemini-edit.*$',
+]
 to = "nvim"
 mode = "new"
 sync = true
+
+# Neovim-family flags that take a spaced value on the next argv
+# (`-c :set ft=md`, `-S session.vim`, `-i NONE`, `--listen /tmp/sock`, …).
+# `consumes = 1` keeps the flag and its value together so they reach nvim
+# intact. Must come before `any-flag` so the more-specific value-taking
+# pattern wins; otherwise the trailing value would be classified as a
+# separate input.
+#
+# `-i NONE` in particular is what Gemini CLI injects when it recognises
+# the editor as vim-family — see README.
+#
+# Note: this binds `-i` (and other letters above) as value-taking by
+# default. If you use $EDITOR=todoke with a tool that calls `-i` with
+# different semantics, drop a `~/.config/todoke/todoke.toml` and tune
+# this rule to taste.
+[[rules]]
+name = "nvim-value-flag"
+match = '^(?:-[cSuUitwW]|--cmd|--startuptime|--listen|--server)$'
+passthrough = true
+consumes = 1
+
+# Catch-all for ex-editor-style argv: `+42`, lone `-`/`+` flags todoke
+# wouldn't otherwise know what to do with. `to` is omitted so the flag
+# rides along with whichever input rule built a batch in the same group.
+[[rules]]
+name = "any-flag"
+match = '^[-+]'
+passthrough = true
 
 # Everything else: reuse a single long-running nvim called "default".
 [[rules]]
