@@ -343,8 +343,75 @@ mod tests {
         );
 
         let idx = first_match_idx(&cfg, "/home/x/notes/idea.md");
-        assert_eq!(idx, Some(1));
-        assert_eq!(cfg.rule(idx.unwrap()).name.as_deref(), Some("default"));
+        assert_eq!(
+            cfg.rule(idx.expect("default rule must match plain files"))
+                .name
+                .as_deref(),
+            Some("default"),
+        );
+    }
+
+    #[test]
+    fn default_config_matches_ai_tool_prompt_paths() {
+        let cfg = load_from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
+        for path in [
+            // Claude Code prompt
+            "/tmp/claude-prompt-abc123.txt",
+            // Gemini CLI prompt (mkdtemp dir + buffer.txt)
+            "/tmp/gemini-edit-abc123/buffer.txt",
+        ] {
+            let idx =
+                first_match_idx(&cfg, path).unwrap_or_else(|| panic!("no rule matched {path}"));
+            assert_eq!(
+                cfg.rule(idx).name.as_deref(),
+                Some("editor-callback"),
+                "expected editor-callback to match {path}",
+            );
+        }
+    }
+
+    #[test]
+    fn default_config_does_not_misroute_project_dirs_named_like_prompts() {
+        // Files inside project directories whose name starts with
+        // `claude-prompt-` / `gemini-edit-` must NOT route through
+        // editor-callback (mode=new, sync=true). They should fall through
+        // to the catch-all `default` rule.
+        let cfg = load_from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
+        for path in [
+            "/home/me/projects/claude-prompt-clone/src/main.rs",
+            "/home/me/projects/gemini-edit-clone/notes.md",
+            // Gemini CLI's basename must be exactly `buffer.txt` — a
+            // file with a different name inside such a dir is a project
+            // file, not a prompt artifact.
+            "/tmp/gemini-edit-abc123/other.txt",
+        ] {
+            let idx =
+                first_match_idx(&cfg, path).unwrap_or_else(|| panic!("no rule matched {path}"));
+            assert_eq!(
+                cfg.rule(idx).name.as_deref(),
+                Some("default"),
+                "{path} should fall through to default, not editor-callback",
+            );
+        }
+    }
+
+    #[test]
+    fn default_config_passthrough_catches_nvim_value_flag() {
+        let cfg = load_from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
+        // -i is what gemini-cli injects in front of the file path; the
+        // rule's `consumes = 1` tells the dispatcher to also eat `NONE`.
+        let (idx, _cap) =
+            first_passthrough_match(&cfg, "-i").expect("nvim-value-flag should match `-i`");
+        assert_eq!(cfg.rule(idx).name.as_deref(), Some("nvim-value-flag"));
+        assert_eq!(cfg.rule(idx).consumes, 1);
+    }
+
+    #[test]
+    fn default_config_passthrough_catches_any_flag() {
+        let cfg = load_from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
+        let (idx, _cap) =
+            first_passthrough_match(&cfg, "+42").expect("any-flag should match `+42`");
+        assert_eq!(cfg.rule(idx).name.as_deref(), Some("any-flag"));
     }
 
     #[test]

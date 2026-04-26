@@ -554,11 +554,23 @@ mod tests {
     fn parses_default_config() {
         let cfg = load_from_str(DEFAULT_CONFIG_TOML).expect("default config must parse");
         assert!(cfg.raw.todoke.contains_key("nvim"));
-        assert_eq!(cfg.raw.rules.len(), 2);
-        assert_eq!(cfg.raw.rules[0].name.as_deref(), Some("editor-callback"));
-        assert_eq!(cfg.raw.rules[1].name.as_deref(), Some("default"));
+        let names: Vec<&str> = cfg
+            .raw
+            .rules
+            .iter()
+            .map(|r| r.name.as_deref().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            names,
+            vec!["editor-callback", "nvim-value-flag", "any-flag", "default"],
+        );
+        // Only editor-callback blocks; passthrough/default rules don't.
         assert!(cfg.raw.rules[0].sync);
-        assert!(!cfg.raw.rules[1].sync);
+        assert!(!cfg.raw.rules[3].sync);
+        // Passthrough rules are passthrough; nvim-value-flag eats its next argv.
+        assert!(cfg.raw.rules[1].passthrough);
+        assert_eq!(cfg.raw.rules[1].consumes, 1);
+        assert!(cfg.raw.rules[2].passthrough);
     }
 
     #[test]

@@ -34,18 +34,29 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --target ${{ matrix.target }}
+      # `todoke-vim` is a byte-for-byte copy of `todoke`, shipped as an
+      # alias so that `EDITOR=todoke-vim` (or `VISUAL=todoke-vim`) is
+      # detected as a terminal editor by callers that classify by name
+      # substring — most notably gemini-cli, which only treats names
+      # containing vi/vim/nvim/emacs/hx/nano as terminal editors and
+      # otherwise spawns async, leaving its TUI re-rendering over the
+      # editor. todoke ignores argv[0] so a plain copy is enough.
       - name: package (unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
+          pkg=target/${{ matrix.target }}/release
+          cp "$pkg/todoke" "$pkg/todoke-vim"
           tar czf dist/todoke-${{ matrix.target }}.tar.gz \
-            -C target/${{ matrix.target }}/release todoke
+            -C "$pkg" todoke todoke-vim
       - name: package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist
-          Compress-Archive -Path target/${{ matrix.target }}/release/todoke.exe `
+          $pkg = "target/${{ matrix.target }}/release"
+          Copy-Item "$pkg/todoke.exe" "$pkg/todoke-vim.exe"
+          Compress-Archive -Path "$pkg/todoke.exe","$pkg/todoke-vim.exe" `
             -DestinationPath dist/todoke-${{ matrix.target }}.zip
       - uses: actions/upload-artifact@v7
         with:
