@@ -704,3 +704,152 @@ sync = false
         "nvim exited after todoke returned — socket not connectable\nstderr: {stderr}"
     );
 }
+
+// --- list / kill ----------------------------------------------------
+//
+// Discovery walks the filesystem for the listen pattern; we don't spawn
+// a real nvim here, so any matched candidates surface as `stale`. That
+// is enough to exercise the CLI plumbing end-to-end. The
+// `#[cfg(unix)]` guard isolates these tests from Windows' named-pipe
+// enumeration, which can't be staged with plain `File::create`.
+
+#[test]
+fn list_reports_no_instances_for_exec_only_config() {
+    let dir = temp_dir();
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        r#"
+            [todoke.echo]
+            command = "echo"
+
+            [[rules]]
+            name = "default"
+            match = '.*'
+            to = "echo"
+        "#,
+    );
+    let (ok, out, err) = run_with(&["--todoke-config", &config.to_string_lossy(), "list"]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.contains("no instances found"), "stdout: {out}");
+}
+
+#[test]
+fn kill_all_with_no_instances_succeeds_with_info() {
+    let dir = temp_dir();
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        r#"
+            [todoke.echo]
+            command = "echo"
+
+            [[rules]]
+            match = '.*'
+            to = "echo"
+        "#,
+    );
+    let (ok, out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "kill",
+        "--all",
+    ]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.contains("no matching instance"), "stdout: {out}");
+}
+
+#[cfg(unix)]
+#[test]
+fn list_picks_up_filesystem_candidates_as_stale() {
+    let dir = temp_dir();
+    // Stage two fake socket files inside the tempdir; the listen
+    // template points at the same dir via `vars.tmp`.
+    std::fs::File::create(dir.join("nvim-todoke-default.sock")).unwrap();
+    std::fs::File::create(dir.join("nvim-todoke-git.sock")).unwrap();
+    // Decoys.
+    std::fs::File::create(dir.join("other.sock")).unwrap();
+    std::fs::File::create(dir.join("nvim-todoke-default.txt")).unwrap();
+
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        &format!(
+            r#"
+                [vars]
+                tmp = "{tmp}"
+
+                [todoke.nvim]
+                kind = "neovim"
+                command = "nvim"
+                listen = "{{{{ vars.tmp }}}}/nvim-todoke-{{{{ group }}}}.sock"
+
+                [[rules]]
+                match = '.*'
+                to = "nvim"
+            "#,
+            tmp = dir.display(),
+        ),
+    );
+
+    let (ok, out, err) = run_with(&["--todoke-config", &config.to_string_lossy(), "list"]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.contains("default"), "stdout: {out}");
+    assert!(out.contains("git"), "stdout: {out}");
+    // Both staged sockets are dead → reported as stale.
+    assert!(out.contains("stale"), "stdout: {out}");
+    // Decoys must not surface.
+    assert!(!out.contains("other.sock"), "stdout: {out}");
+
+    // --alive-only filters them all out.
+    let (ok2, out2, _) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "list",
+        "--alive-only",
+    ]);
+    assert!(ok2);
+    assert!(out2.contains("no instances found"), "stdout: {out2}");
+}
+
+#[cfg(unix)]
+#[test]
+fn kill_all_unlinks_stale_socket_files() {
+    let dir = temp_dir();
+    let stale_a = dir.join("nvim-todoke-default.sock");
+    let stale_b = dir.join("nvim-todoke-git.sock");
+    std::fs::File::create(&stale_a).unwrap();
+    std::fs::File::create(&stale_b).unwrap();
+
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        &format!(
+            r#"
+                [vars]
+                tmp = "{tmp}"
+
+                [todoke.nvim]
+                kind = "neovim"
+                command = "nvim"
+                listen = "{{{{ vars.tmp }}}}/nvim-todoke-{{{{ group }}}}.sock"
+
+                [[rules]]
+                match = '.*'
+                to = "nvim"
+            "#,
+            tmp = dir.display(),
+        ),
+    );
+
+    let (ok, out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "kill",
+        "--all",
+    ]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.contains("stale, removed"), "stdout: {out}");
+    assert!(!stale_a.exists(), "default socket should be unlinked");
+    assert!(!stale_b.exists(), "git socket should be unlinked");
+}

@@ -107,6 +107,11 @@ pub enum Command {
             help = "Kill every known instance"
         )]
         all: bool,
+        #[arg(
+            long = "force",
+            help = "Escalate to OS-level kill (SIGKILL / TerminateProcess) when `:qall!` doesn't take effect"
+        )]
+        force: bool,
     },
 
     #[command(about = "Dry-run: show the dispatch plan for the given inputs without executing")]
