@@ -1379,6 +1379,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "directories",
+ "libc",
  "nvim-rs",
  "owo-colors",
  "regex",

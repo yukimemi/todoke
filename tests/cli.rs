@@ -704,3 +704,184 @@ sync = false
         "nvim exited after todoke returned — socket not connectable\nstderr: {stderr}"
     );
 }
+
+// --- list / kill ----------------------------------------------------
+//
+// Discovery walks the filesystem for the listen pattern; we don't spawn
+// a real nvim here, so any matched candidates surface as `stale`. That
+// is enough to exercise the CLI plumbing end-to-end. The
+// `#[cfg(unix)]` guard isolates these tests from Windows' named-pipe
+// enumeration, which can't be staged with plain `File::create`.
+
+#[test]
+fn list_reports_no_instances_for_exec_only_config() {
+    let dir = temp_dir();
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        r#"
+            [todoke.echo]
+            command = "echo"
+
+            [[rules]]
+            name = "default"
+            match = '.*'
+            to = "echo"
+        "#,
+    );
+    let (ok, out, err) = run_with(&["--todoke-config", &config.to_string_lossy(), "list"]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.contains("no instances found"), "stdout: {out}");
+}
+
+#[test]
+fn kill_all_with_no_instances_succeeds_with_info() {
+    let dir = temp_dir();
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        r#"
+            [todoke.echo]
+            command = "echo"
+
+            [[rules]]
+            match = '.*'
+            to = "echo"
+        "#,
+    );
+    let (ok, out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "kill",
+        "--all",
+    ]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.contains("no matching instance"), "stdout: {out}");
+}
+
+#[cfg(unix)]
+fn make_stale_socket(path: &Path) {
+    use std::os::unix::net::UnixListener;
+    // Bind to create the on-disk socket file, then drop the listener
+    // so subsequent connect attempts get ECONNREFUSED — the canonical
+    // shape for a socket left behind by a crashed nvim.
+    let _l = UnixListener::bind(path).expect("bind unix socket");
+}
+
+/// Short-path tempdir for AF_UNIX socket fixtures. On macOS,
+/// `std::env::temp_dir()` resolves to `/var/folders/xx/<long-hash>/T/`,
+/// long enough that appending a fixture name pushes the full path past
+/// sockaddr_un.sun_path's 104-byte cap and trips bind() with
+/// `InvalidInput`. Pin under /tmp instead — short on every Unix.
+#[cfg(unix)]
+fn socket_safe_temp_dir() -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let pid = std::process::id();
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let d = PathBuf::from("/tmp").join(format!("todoke-cli-{stamp}-{pid}-{seq}"));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[cfg(unix)]
+#[test]
+fn list_picks_up_filesystem_candidates_as_stale() {
+    let dir = socket_safe_temp_dir();
+    // Stage two real but unattended Unix sockets inside the tempdir;
+    // the listen template points at the same dir via `vars.tmp`.
+    make_stale_socket(&dir.join("nvim-todoke-default.sock"));
+    make_stale_socket(&dir.join("nvim-todoke-git.sock"));
+    // Decoys: regular file with .sock extension must be filtered out
+    // by the is_socket() gate, and a non-matching name must miss the
+    // skeleton entirely.
+    std::fs::File::create(dir.join("nvim-todoke-imposter.sock")).unwrap();
+    make_stale_socket(&dir.join("other.sock"));
+
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        &format!(
+            r#"
+                [vars]
+                tmp = "{tmp}"
+
+                [todoke.nvim]
+                kind = "neovim"
+                command = "nvim"
+                listen = "{{{{ vars.tmp }}}}/nvim-todoke-{{{{ group }}}}.sock"
+
+                [[rules]]
+                match = '.*'
+                to = "nvim"
+            "#,
+            tmp = dir.display(),
+        ),
+    );
+
+    let (ok, out, err) = run_with(&["--todoke-config", &config.to_string_lossy(), "list"]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.contains("default"), "stdout: {out}");
+    assert!(out.contains("git"), "stdout: {out}");
+    // Both staged sockets are dead → reported as stale.
+    assert!(out.contains("stale"), "stdout: {out}");
+    // Decoys must not surface: regular file (imposter), or non-matching name (other).
+    assert!(!out.contains("imposter"), "stdout: {out}");
+    assert!(!out.contains("other.sock"), "stdout: {out}");
+
+    // --alive-only filters them all out.
+    let (ok2, out2, _) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "list",
+        "--alive-only",
+    ]);
+    assert!(ok2);
+    assert!(out2.contains("no instances found"), "stdout: {out2}");
+}
+
+#[cfg(unix)]
+#[test]
+fn kill_all_unlinks_stale_socket_files() {
+    let dir = socket_safe_temp_dir();
+    let stale_a = dir.join("nvim-todoke-default.sock");
+    let stale_b = dir.join("nvim-todoke-git.sock");
+    make_stale_socket(&stale_a);
+    make_stale_socket(&stale_b);
+
+    let config = dir.join("todoke.toml");
+    write_file(
+        &config,
+        &format!(
+            r#"
+                [vars]
+                tmp = "{tmp}"
+
+                [todoke.nvim]
+                kind = "neovim"
+                command = "nvim"
+                listen = "{{{{ vars.tmp }}}}/nvim-todoke-{{{{ group }}}}.sock"
+
+                [[rules]]
+                match = '.*'
+                to = "nvim"
+            "#,
+            tmp = dir.display(),
+        ),
+    );
+
+    let (ok, out, err) = run_with(&[
+        "--todoke-config",
+        &config.to_string_lossy(),
+        "kill",
+        "--all",
+    ]);
+    assert!(ok, "stderr: {err}");
+    assert!(out.contains("stale, removed"), "stdout: {out}");
+    assert!(!stale_a.exists(), "default socket should be unlinked");
+    assert!(!stale_b.exists(), "git socket should be unlinked");
+}

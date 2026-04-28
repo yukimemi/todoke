@@ -188,15 +188,119 @@ pub async fn doctor(cli: &Cli) -> Result<()> {
     }
 }
 
-pub async fn list(_alive_only: bool) -> Result<()> {
-    bail!("list: not implemented yet")
+/// Enumerate live and stale editor instances and print a one-line summary
+/// per match. `--alive-only` filters out instances whose listen path
+/// resolves but doesn't accept an RPC connect (typically stale socket
+/// files left by a crashed nvim).
+pub async fn list(cli: &Cli, alive_only: bool) -> Result<()> {
+    let cfg = config::load(cli.config.as_deref())?;
+    let mut instances = crate::registry::discover(&cfg).await;
+    if alive_only {
+        instances.retain(|i| i.alive);
+    }
+
+    if instances.is_empty() {
+        println!("{} no instances found", styled("info", level_info()),);
+        return Ok(());
+    }
+
+    for inst in &instances {
+        let status = if inst.alive {
+            styled("alive", level_ok()).to_string()
+        } else {
+            styled("stale", level_warn()).to_string()
+        };
+        println!(
+            "{}  {}  {}  {}",
+            status,
+            styled(&inst.target, accent()),
+            styled(&inst.group, bold()),
+            styled(&inst.listen, dim()),
+        );
+    }
+    Ok(())
 }
 
-pub async fn kill(group: Option<&str>, all: bool) -> Result<()> {
+/// Send `qall!` to one or more running instances. Without `--all`, the
+/// `<GROUP>` arg picks every instance whose group matches across every
+/// neovim target. Stale instances (listen path on disk but no RPC
+/// listener) are unlinked on Unix and ignored on Windows. With `--force`,
+/// instances that don't exit on `:qall!` are escalated to an OS-level
+/// kill via SIGKILL / TerminateProcess.
+pub async fn kill(cli: &Cli, group: Option<&str>, all: bool, force: bool) -> Result<()> {
     if group.is_none() && !all {
         bail!("specify <group> or --all");
     }
-    bail!("kill: not implemented yet")
+    let cfg = config::load(cli.config.as_deref())?;
+    let mut instances = crate::registry::discover(&cfg).await;
+    if let Some(g) = group {
+        instances.retain(|i| i.group == g);
+    }
+
+    if instances.is_empty() {
+        let scope = group.unwrap_or("<all>");
+        println!(
+            "{} no matching instance to kill (group={})",
+            styled("info", level_info()),
+            styled(scope, accent()),
+        );
+        return Ok(());
+    }
+
+    let mut failures = 0usize;
+    for inst in &instances {
+        let header = format!(
+            "{} {} {}",
+            styled(&inst.target, accent()),
+            styled(&inst.group, bold()),
+            styled(&inst.listen, dim()),
+        );
+        if !inst.alive {
+            match crate::registry::cleanup_stale(&inst.listen) {
+                Ok(true) => println!("{}  {header} — stale, removed", styled("ok", level_ok()),),
+                Ok(false) => println!(
+                    "{}  {header} — stale (no on-disk residue to clean on this platform)",
+                    styled("warn", level_warn()),
+                ),
+                Err(e) => {
+                    failures += 1;
+                    println!(
+                        "{} {header} — failed to remove stale: {e}",
+                        styled("error", level_error()),
+                    );
+                }
+            }
+            continue;
+        }
+        match crate::registry::kill_instance(&inst.listen, force).await {
+            Ok(crate::registry::KillOutcome::Quit) => {
+                println!("{}  {header}", styled("ok", level_ok()));
+            }
+            Ok(crate::registry::KillOutcome::Forced { pid }) => {
+                println!(
+                    "{}  {header} — forced (pid={pid})",
+                    styled("ok", level_ok()),
+                );
+            }
+            Ok(crate::registry::KillOutcome::StillAlive) => {
+                failures += 1;
+                println!(
+                    "{} {header} — qall! did not take effect; pass --force to escalate",
+                    styled("warn", level_warn()),
+                );
+            }
+            Err(e) => {
+                failures += 1;
+                println!("{} {header} — {e}", styled("error", level_error()));
+            }
+        }
+    }
+
+    if failures == 0 {
+        Ok(())
+    } else {
+        bail!("{failures} instance(s) failed to quit cleanly")
+    }
 }
 
 /// One batch of inputs bound for a single (target, group, mode, sync) quad.
