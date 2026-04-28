@@ -768,10 +768,30 @@ fn make_stale_socket(path: &Path) {
     let _l = UnixListener::bind(path).expect("bind unix socket");
 }
 
+/// Short-path tempdir for AF_UNIX socket fixtures. On macOS,
+/// `std::env::temp_dir()` resolves to `/var/folders/xx/<long-hash>/T/`,
+/// long enough that appending a fixture name pushes the full path past
+/// sockaddr_un.sun_path's 104-byte cap and trips bind() with
+/// `InvalidInput`. Pin under /tmp instead — short on every Unix.
+#[cfg(unix)]
+fn socket_safe_temp_dir() -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let pid = std::process::id();
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let d = PathBuf::from("/tmp").join(format!("todoke-cli-{stamp}-{pid}-{seq}"));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
 #[cfg(unix)]
 #[test]
 fn list_picks_up_filesystem_candidates_as_stale() {
-    let dir = temp_dir();
+    let dir = socket_safe_temp_dir();
     // Stage two real but unattended Unix sockets inside the tempdir;
     // the listen template points at the same dir via `vars.tmp`.
     make_stale_socket(&dir.join("nvim-todoke-default.sock"));
@@ -827,7 +847,7 @@ fn list_picks_up_filesystem_candidates_as_stale() {
 #[cfg(unix)]
 #[test]
 fn kill_all_unlinks_stale_socket_files() {
-    let dir = temp_dir();
+    let dir = socket_safe_temp_dir();
     let stale_a = dir.join("nvim-todoke-default.sock");
     let stale_b = dir.join("nvim-todoke-git.sock");
     make_stale_socket(&stale_a);

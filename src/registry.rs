@@ -627,7 +627,13 @@ mod tests {
                 .as_nanos();
             let pid = std::process::id();
             let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let d = std::env::temp_dir().join(format!("todoke-registry-{stamp}-{pid}-{seq}"));
+            // Pin to /tmp instead of std::env::temp_dir(): on macOS
+            // the latter resolves to `/var/folders/xx/<long-hash>/T/`,
+            // which pushes AF_UNIX socket paths past sockaddr_un.sun_path's
+            // 104-byte limit (`SUN_LEN`) and trips bind() with
+            // `InvalidInput`. /tmp is short on every Unix and is the
+            // canonical socket-friendly tempdir.
+            let d = PathBuf::from("/tmp").join(format!("todoke-registry-{stamp}-{pid}-{seq}"));
             std::fs::create_dir_all(&d).unwrap();
             d
         }
