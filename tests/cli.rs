@@ -760,16 +760,27 @@ fn kill_all_with_no_instances_succeeds_with_info() {
 }
 
 #[cfg(unix)]
+fn make_stale_socket(path: &Path) {
+    use std::os::unix::net::UnixListener;
+    // Bind to create the on-disk socket file, then drop the listener
+    // so subsequent connect attempts get ECONNREFUSED — the canonical
+    // shape for a socket left behind by a crashed nvim.
+    let _l = UnixListener::bind(path).expect("bind unix socket");
+}
+
+#[cfg(unix)]
 #[test]
 fn list_picks_up_filesystem_candidates_as_stale() {
     let dir = temp_dir();
-    // Stage two fake socket files inside the tempdir; the listen
-    // template points at the same dir via `vars.tmp`.
-    std::fs::File::create(dir.join("nvim-todoke-default.sock")).unwrap();
-    std::fs::File::create(dir.join("nvim-todoke-git.sock")).unwrap();
-    // Decoys.
-    std::fs::File::create(dir.join("other.sock")).unwrap();
-    std::fs::File::create(dir.join("nvim-todoke-default.txt")).unwrap();
+    // Stage two real but unattended Unix sockets inside the tempdir;
+    // the listen template points at the same dir via `vars.tmp`.
+    make_stale_socket(&dir.join("nvim-todoke-default.sock"));
+    make_stale_socket(&dir.join("nvim-todoke-git.sock"));
+    // Decoys: regular file with .sock extension must be filtered out
+    // by the is_socket() gate, and a non-matching name must miss the
+    // skeleton entirely.
+    std::fs::File::create(dir.join("nvim-todoke-imposter.sock")).unwrap();
+    make_stale_socket(&dir.join("other.sock"));
 
     let config = dir.join("todoke.toml");
     write_file(
@@ -798,7 +809,8 @@ fn list_picks_up_filesystem_candidates_as_stale() {
     assert!(out.contains("git"), "stdout: {out}");
     // Both staged sockets are dead → reported as stale.
     assert!(out.contains("stale"), "stdout: {out}");
-    // Decoys must not surface.
+    // Decoys must not surface: regular file (imposter), or non-matching name (other).
+    assert!(!out.contains("imposter"), "stdout: {out}");
     assert!(!out.contains("other.sock"), "stdout: {out}");
 
     // --alive-only filters them all out.
@@ -818,8 +830,8 @@ fn kill_all_unlinks_stale_socket_files() {
     let dir = temp_dir();
     let stale_a = dir.join("nvim-todoke-default.sock");
     let stale_b = dir.join("nvim-todoke-git.sock");
-    std::fs::File::create(&stale_a).unwrap();
-    std::fs::File::create(&stale_b).unwrap();
+    make_stale_socket(&stale_a);
+    make_stale_socket(&stale_b);
 
     let config = dir.join("todoke.toml");
     write_file(

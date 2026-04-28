@@ -12,6 +12,8 @@ use std::collections::HashSet;
 #[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
+#[cfg(unix)]
 use std::path::Path;
 use std::time::Duration;
 
@@ -80,6 +82,19 @@ impl ListenSkeleton {
         };
         if suffix.contains(GROUP_SENTINEL) {
             bail!("listen template references {{{{ group }}}} more than once");
+        }
+        // Discovery walks one directory level (Unix `read_dir` on
+        // `prefix.parent()`, Windows `FindFirstFileW` on
+        // `\\.\pipe\*`). A `{{ group }}` placed outside the final path
+        // component (e.g. `/tmp/{{ group }}/nvim.sock`) survives the
+        // skeleton split but lands in a directory the enumerator
+        // never visits, silently producing zero hits. Reject it up
+        // front so the misconfiguration surfaces at parse time.
+        if suffix.contains('/') {
+            bail!(
+                "listen template uses {{{{ group }}}} outside the final path component \
+                 (suffix `{suffix}` contains `/`); enumeration walks one directory level only",
+            );
         }
         Ok(Self {
             prefix: prefix.to_string(),
@@ -216,6 +231,16 @@ fn enumerate_candidates(skeleton: &ListenSkeleton) -> Vec<String> {
     };
     let mut out = Vec::new();
     for ent in entries.flatten() {
+        // Filter to actual Unix sockets — a regular file whose name
+        // happens to match the listen template would otherwise be
+        // surfaced as `stale` and unlinked by `cleanup_stale`,
+        // destroying unrelated user data.
+        let Ok(file_type) = ent.file_type() else {
+            continue;
+        };
+        if !file_type.is_socket() {
+            continue;
+        }
         let name = ent.file_name();
         let Some(name_s) = name.to_str() else {
             continue;
@@ -356,6 +381,14 @@ pub async fn kill_instance(listen: &str, force: bool) -> Result<KillOutcome> {
         anyhow!("qall! did not take effect and PID lookup failed; cannot --force")
     })?;
     os_kill(pid).with_context(|| format!("force-kill pid={pid} failed"))?;
+    // SIGKILL bypasses nvim's normal teardown, leaving its bound
+    // listen socket on disk as a stale entry. Unlink it now so the
+    // next `todoke list` doesn't keep flagging the corpse.
+    // Errors are swallowed because force-kill itself succeeded —
+    // the user's intent ("make it go away") is served, and a
+    // residual stale entry will be cleaned up the next time
+    // `todoke kill` runs (or by the user manually).
+    let _ = cleanup_stale(listen);
     Ok(KillOutcome::Forced { pid })
 }
 
@@ -492,6 +525,18 @@ mod tests {
     }
 
     #[test]
+    fn skeleton_errors_when_group_is_not_in_final_path_component() {
+        // `/tmp/{{ group }}/nvim.sock` survives the split (one
+        // sentinel reference), but the suffix `/nvim.sock` would
+        // steer enumeration to a directory the walker never visits.
+        // We surface that at parse time instead of producing zero
+        // hits silently at discovery.
+        let c = min_cfg();
+        let err = ListenSkeleton::from_template(&c, "/tmp/{{ group }}/nvim.sock").unwrap_err();
+        assert!(err.to_string().contains("final path component"));
+    }
+
+    #[test]
     fn extract_group_recovers_value_when_shape_matches() {
         let s = ListenSkeleton {
             prefix: "/tmp/nvim-todoke-".into(),
@@ -553,15 +598,27 @@ mod tests {
         assert_eq!(s.suffix, ".sock");
     }
 
-    // The discovery tests use real filesystem entries in a tempdir.
-    // They cover the fs walk + skeleton match path; `alive` is always
-    // false (no real nvim listening) so we don't assert on it.
+    // The discovery tests stage real Unix sockets via `UnixListener::bind`
+    // (then drop the listener immediately so the file remains but no one
+    // accepts on it — the canonical "stale socket" shape). `alive` ends up
+    // false because the post-drop fd is gone; the file inode persists.
     #[cfg(unix)]
     mod discovery_unix {
         use super::*;
         use std::fs::File;
+        use std::os::unix::net::UnixListener;
+        use std::path::PathBuf;
 
-        fn unique_tempdir() -> std::path::PathBuf {
+        /// Bind a UnixListener to create the on-disk socket file, then
+        /// drop it so subsequent connect attempts get ECONNREFUSED.
+        /// The path remains as a S_IFSOCK file — the exact shape a
+        /// crashed nvim leaves behind.
+        fn make_stale_socket(path: &std::path::Path) {
+            let _l = UnixListener::bind(path).expect("bind unix socket");
+            // _l drops at end of scope, fd closes, file inode stays.
+        }
+
+        fn unique_tempdir() -> PathBuf {
             use std::sync::atomic::{AtomicU64, Ordering};
             static COUNTER: AtomicU64 = AtomicU64::new(0);
             let stamp = std::time::SystemTime::now()
@@ -598,10 +655,10 @@ mod tests {
         #[tokio::test]
         async fn discover_finds_matching_filesystem_entries() {
             let tmp = unique_tempdir();
-            File::create(tmp.join("nvim-todoke-default.sock")).unwrap();
-            File::create(tmp.join("nvim-todoke-git.sock")).unwrap();
-            // Decoy that should be ignored.
-            File::create(tmp.join("other.sock")).unwrap();
+            make_stale_socket(&tmp.join("nvim-todoke-default.sock"));
+            make_stale_socket(&tmp.join("nvim-todoke-git.sock"));
+            // Decoys that should be ignored.
+            make_stale_socket(&tmp.join("other.sock"));
             File::create(tmp.join("nvim-todoke-default.txt")).unwrap();
 
             let cfg = cfg_with_tmpdir(&tmp);
@@ -613,6 +670,23 @@ mod tests {
                 assert_eq!(inst.target, "nvim");
                 assert!(!inst.alive, "no real nvim → alive must be false");
             }
+        }
+
+        #[tokio::test]
+        async fn discover_filters_out_regular_files_matching_the_pattern() {
+            // A regular file at /tmp/nvim-todoke-imposter.sock would be
+            // a name collision against the listen template. Without
+            // the is_socket() filter, discovery would surface it as
+            // `stale` and `cleanup_stale` would later unlink it,
+            // destroying unrelated user data. Verify the filter holds.
+            let tmp = unique_tempdir();
+            make_stale_socket(&tmp.join("nvim-todoke-real.sock"));
+            File::create(tmp.join("nvim-todoke-imposter.sock")).unwrap();
+
+            let cfg = cfg_with_tmpdir(&tmp);
+            let instances = discover(&cfg).await;
+            let groups: Vec<&str> = instances.iter().map(|i| i.group.as_str()).collect();
+            assert_eq!(groups, vec!["real"]);
         }
 
         #[tokio::test]
