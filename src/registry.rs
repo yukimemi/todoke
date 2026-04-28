@@ -131,9 +131,14 @@ fn render_with_group(cfg: &ResolvedConfig, template: &str, group: &str) -> Resul
 /// candidate listen path on disk. Sorted by `(target, group)` so the
 /// caller can format directly. Targets whose listen template lacks
 /// `{{ group }}` are skipped — there's nothing to enumerate.
+///
+/// Pings are issued in parallel via [`tokio::task::JoinSet`] so a
+/// directory full of stale sockets doesn't accumulate `N × 500ms` of
+/// sequential probe latency.
 pub async fn discover(cfg: &ResolvedConfig) -> Vec<Instance> {
-    let mut out = Vec::new();
+    let mut tasks = tokio::task::JoinSet::new();
     let mut seen: HashSet<String> = HashSet::new();
+
     for (target_name, target) in &cfg.raw.todoke {
         if target.kind != TargetKind::Neovim {
             continue;
@@ -158,13 +163,23 @@ pub async fn discover(cfg: &ResolvedConfig) -> Vec<Instance> {
             let Some(group) = skeleton.extract_group(&path) else {
                 continue;
             };
-            let alive = ping(&path).await;
-            out.push(Instance {
-                target: target_name.clone(),
-                group,
-                listen: path,
-                alive,
+            let target_name = target_name.clone();
+            tasks.spawn(async move {
+                let alive = ping(&path).await;
+                Instance {
+                    target: target_name,
+                    group,
+                    listen: path,
+                    alive,
+                }
             });
+        }
+    }
+
+    let mut out = Vec::with_capacity(tasks.len());
+    while let Some(res) = tasks.join_next().await {
+        if let Ok(inst) = res {
+            out.push(inst);
         }
     }
     out.sort_by(|a, b| a.target.cmp(&b.target).then_with(|| a.group.cmp(&b.group)));
@@ -174,14 +189,26 @@ pub async fn discover(cfg: &ResolvedConfig) -> Vec<Instance> {
 #[cfg(unix)]
 fn enumerate_candidates(skeleton: &ListenSkeleton) -> Vec<String> {
     let prefix_path = Path::new(&skeleton.prefix);
-    let parent = prefix_path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let basename_prefix = prefix_path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    // When the prefix ends in a path separator (e.g. listen template
+    // `/tmp/{{ group }}.sock` → prefix `/tmp/`), `Path::file_name`
+    // returns the trailing dir component instead of an empty basename
+    // and `Path::parent` walks one level too high. Detect that shape
+    // explicitly so `parent = prefix_path` and the basename matcher
+    // sees the full filename for prefix-comparison.
+    let (parent, basename_prefix) = if skeleton.prefix.ends_with('/') {
+        (prefix_path, "")
+    } else {
+        (
+            prefix_path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new(".")),
+            prefix_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(""),
+        )
+    };
     let basename_suffix = skeleton.suffix.as_str();
 
     let Ok(entries) = fs::read_dir(parent) else {
@@ -292,7 +319,7 @@ pub enum KillOutcome {
 /// proves the kill landed; the post-`qall!` ping is the authoritative
 /// liveness check.
 pub async fn kill_instance(listen: &str, force: bool) -> Result<KillOutcome> {
-    let (nvim, _io) = timeout(PROBE_TIMEOUT, create::new_path(listen, DummyHandler))
+    let (nvim, io_handle) = timeout(PROBE_TIMEOUT, create::new_path(listen, DummyHandler))
         .await
         .map_err(|_| anyhow!("connect timed out after {:?}", PROBE_TIMEOUT))?
         .map_err(|e| anyhow!("RPC connect failed: {e}"))?;
@@ -313,7 +340,10 @@ pub async fn kill_instance(listen: &str, force: bool) -> Result<KillOutcome> {
     let _ = nvim.command("qall!").await;
     drop(nvim);
 
-    tokio::time::sleep(QUIT_GRACE).await;
+    // The I/O task resolves as soon as nvim drops the RPC connection
+    // (i.e. exits), so we get an early-exit for healthy quits and only
+    // pay the full grace window when the process is genuinely wedged.
+    let _ = timeout(QUIT_GRACE, io_handle).await;
     if !ping(listen).await {
         return Ok(KillOutcome::Quit);
     }
