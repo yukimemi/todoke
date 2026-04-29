@@ -912,11 +912,8 @@ mod tests {
                 // Hold every accepted stream open without responding so
                 // any RPC the client issues hangs waiting for a reply.
                 let mut held = Vec::new();
-                loop {
-                    match listener.accept().await {
-                        Ok((stream, _)) => held.push(stream),
-                        Err(_) => break,
-                    }
+                while let Ok((stream, _)) = listener.accept().await {
+                    held.push(stream);
                 }
             })
         }
