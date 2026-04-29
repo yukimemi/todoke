@@ -564,7 +564,7 @@ todoke [INPUTS]...           # dispatch inputs per rules (default action)
 todoke check [INPUTS]...     # dry-run: show the dispatch plan without executing
 todoke doctor                # lint the config for common footguns
 todoke list [--alive-only]              # list discovered editor instances (alive + stale)
-todoke kill <group> | --all [--force]   # quit instances via :qall!; --force escalates to OS kill (SIGKILL / TerminateProcess) when wedged
+todoke kill <group>|--all [--force]     # quit instances via :qall!; --force escalates to OS kill (SIGKILL / TerminateProcess) when wedged
 todoke config path           # print the resolved config file path
 todoke config init           # write the embedded default config if missing (idempotent)
 todoke config edit           # open the config in $EDITOR (writes the default first if missing)
