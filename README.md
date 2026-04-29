@@ -563,8 +563,8 @@ and rule sections, and all other stock [Tera features][tera].
 todoke [INPUTS]...           # dispatch inputs per rules (default action)
 todoke check [INPUTS]...     # dry-run: show the dispatch plan without executing
 todoke doctor                # lint the config for common footguns
-todoke list                  # list alive handler instances (NOT IMPLEMENTED YET)
-todoke kill <group> | --all  # terminate instances (NOT IMPLEMENTED YET)
+todoke list [--alive-only]              # list discovered editor instances (alive + stale)
+todoke kill <group>|--all [--force]     # quit instances via :qall!; --force escalates to OS kill (SIGKILL / TerminateProcess) when wedged
 todoke config path           # print the resolved config file path
 todoke config init           # write the embedded default config if missing (idempotent)
 todoke config edit           # open the config in $EDITOR (writes the default first if missing)
@@ -610,10 +610,17 @@ Shipped (v2.0.0):
 - full `config` subcommand surface — `path` / `init` / `edit` / `show`
 - breaking CLI cleanup vs. the v1.x line — see the v2.0.0 release notes
 
+Shipped (v2.2.0):
+
+- `list` / `kill` — discover running editor instances by reverse-engineering
+  each `[todoke.<name>]`'s `listen` template (Unix socket / Windows named
+  pipe), then RPC-ping each candidate to mark `alive` vs `stale`.
+  `kill <group>|--all` quits matching instances via `:qall!`, unlinks
+  stale Unix sockets left by crashed nvims, and with `--force` escalates
+  to `SIGKILL` / `TerminateProcess` for wedged processes.
+
 Planned:
 
-- `list` / `kill` — currently stubbed (`bail!("not implemented yet")`);
-  list alive nvim instances and terminate them by group
 - neovim `remote + sync` via `nvim_buf_attach` — block on a reused
   nvim until the user closes the buffer (currently only fresh-spawn
   nvim supports `sync = true`)
