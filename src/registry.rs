@@ -18,7 +18,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
-use nvim_rs::{Handler, compat::tokio::Compat, create::tokio as create};
+use nvim_rs::{Handler, Neovim, compat::tokio::Compat, create::tokio as create};
 use tokio::io::WriteHalf;
 use tokio::time::timeout;
 use tracing::debug;
@@ -363,84 +363,57 @@ const MAX_FORCE_ROUNDS: usize = 8;
 /// drops as nvim exits; the post-`qall!` ping is the authoritative
 /// liveness check.
 pub async fn kill_instance(listen: &str, force: bool) -> Result<KillOutcome> {
+    // Round 0: graceful qall! attempt with post-ping. The post-ping is
+    // mandatory here because it's the only way to distinguish three
+    // outcomes — Quit (qall! cleared the path), StillAlive (no --force,
+    // path still up), and "still alive, escalate" (--force, enter sweep).
+    let (nvim, io_handle) = timeout(PROBE_TIMEOUT, create::new_path(listen, DummyHandler))
+        .await
+        .map_err(|_| anyhow!("connect timed out after {:?}", PROBE_TIMEOUT))?
+        .map_err(|e| anyhow!("RPC connect failed: {e}"))?;
+
+    let mut next_pid = if force {
+        capture_pid(&nvim, listen).await
+    } else {
+        None
+    };
+
+    let _ = timeout(QUIT_GRACE, nvim.command("qall!")).await;
+    drop(nvim);
+    // The I/O task resolves as soon as nvim drops the RPC connection
+    // (i.e. exits), so healthy quits early-exit and we only pay the
+    // full grace window when the process is genuinely wedged.
+    let _ = timeout(QUIT_GRACE, io_handle).await;
+
+    if !ping(listen).await {
+        return Ok(KillOutcome::Quit);
+    }
+    if !force {
+        return Ok(KillOutcome::StillAlive);
+    }
+
+    // Sweep loop. Each round OS-kills the captured PID, then the *next*
+    // round's connect attempt doubles as the liveness probe — we don't
+    // re-`ping` separately at the round boundary. A failed connect
+    // means the pipe is gone, which is what we want.
     let mut forced_pid: Option<u32> = None;
-    let mut sent_qall = false;
-
-    for round in 0..MAX_FORCE_ROUNDS {
-        let connect = timeout(PROBE_TIMEOUT, create::new_path(listen, DummyHandler)).await;
-        let (nvim, io_handle) = match connect {
-            Ok(Ok(pair)) => pair,
-            Ok(Err(e)) => {
-                if round == 0 {
-                    return Err(anyhow!("RPC connect failed: {e}"));
-                }
-                // After at least one successful pass, a connect error
-                // usually means the pipe is gone — re-ping confirms.
-                break;
-            }
-            Err(_) => {
-                if round == 0 {
-                    return Err(anyhow!("connect timed out after {:?}", PROBE_TIMEOUT));
-                }
-                break;
-            }
-        };
-
-        // Capture PID *before* sending qall!. After qall! the process may
-        // exit or stop responding; we'd lose the chance to ask for it.
-        // The eval is timeout-bounded so a wedged nvim can't hang us
-        // here. On Windows, fall back to `GetNamedPipeServerProcessId`
-        // when eval fails — that path doesn't need nvim to be
-        // responsive, just reachable on the pipe, which is the exact
-        // shape of a hit-enter-prompt-wedged nvim.
-        let pid: Option<u32> = if force {
-            let from_eval = match timeout(PROBE_TIMEOUT, nvim.eval("getpid()")).await {
-                Ok(Ok(v)) => v.as_i64().and_then(|n| u32::try_from(n).ok()),
-                _ => None,
-            };
-            from_eval.or_else(|| pid_from_listen(listen))
-        } else {
-            None
-        };
-
-        // Only send qall! once. On round ≥ 1 we already know it didn't
-        // clear the listen path; re-issuing wastes the grace window.
-        if !sent_qall {
-            let _ = timeout(QUIT_GRACE, nvim.command("qall!")).await;
-            sent_qall = true;
-        }
-        drop(nvim);
-
-        // The I/O task resolves as soon as nvim drops the RPC connection
-        // (i.e. exits), so we get an early-exit for healthy quits and only
-        // pay the full grace window when the process is genuinely wedged.
-        let _ = timeout(QUIT_GRACE, io_handle).await;
-        if !ping(listen).await {
-            return Ok(match forced_pid {
-                Some(pid) => KillOutcome::Forced { pid },
-                None => KillOutcome::Quit,
-            });
-        }
-
-        if !force {
-            return Ok(KillOutcome::StillAlive);
-        }
-
-        let Some(pid) = pid else {
+    for _ in 0..MAX_FORCE_ROUNDS {
+        let Some(pid) = next_pid else {
             if forced_pid.is_none() {
                 return Err(anyhow!(
                     "qall! did not take effect and PID lookup failed; cannot --force"
                 ));
             }
-            // We've already killed something this run but the next
+            // We've already killed something this run, but the next
             // server queued on this path won't tell us its PID. Stop;
-            // the partial-kill error below will surface the situation.
+            // the partial-kill error below surfaces the situation.
             break;
         };
 
-        // OS-kill failures are non-fatal during sweep: the process is
-        // often already gone (qall! reached it, or a previous round
-        // killed it). The post-loop ping is the authoritative check.
+        // OS-kill failures are non-fatal during sweep: the targeted
+        // process is often already gone (qall! reached it, or a
+        // previous round killed it). The next connect attempt is the
+        // authoritative liveness check.
         if os_kill(pid).is_ok() {
             forced_pid.get_or_insert(pid);
         }
@@ -450,6 +423,23 @@ pub async fn kill_instance(listen: &str, force: bool) -> Result<KillOutcome> {
         // flagging the corpse. Errors are swallowed — a residual stale
         // entry will be cleaned up next run.
         let _ = cleanup_stale(listen);
+
+        // Probe by attempting another RPC connect. Failure → pipe is
+        // gone → we're done. Success → another server is queued; grab
+        // its PID and loop.
+        match timeout(PROBE_TIMEOUT, create::new_path(listen, DummyHandler)).await {
+            Ok(Ok((nvim, io_handle))) => {
+                next_pid = capture_pid(&nvim, listen).await;
+                drop(nvim);
+                let _ = timeout(QUIT_GRACE, io_handle).await;
+            }
+            _ => {
+                return Ok(match forced_pid {
+                    Some(pid) => KillOutcome::Forced { pid },
+                    None => KillOutcome::Quit,
+                });
+            }
+        }
     }
 
     if !ping(listen).await {
@@ -513,19 +503,43 @@ fn os_kill(pid: u32) -> Result<()> {
     }
 }
 
-/// Recover the listen-path server's PID without round-tripping through
-/// nvim's RPC. The eval-based path is preferred (it works on every
-/// platform), but a wedged nvim — stuck in a hit-enter prompt, modal
-/// confirmation, or a slow autocmd — won't answer eval. On Windows we
-/// can ask the OS instead.
+/// Recover the kill target's PID. Tries `eval(getpid())` first because
+/// it works on every platform; if that fails (typical for a wedged
+/// nvim that's not servicing RPC), falls back to a platform-specific
+/// listen-path probe. Always bounded — never blocks indefinitely.
+async fn capture_pid(nvim: &Neovim<NvimWriter>, listen: &str) -> Option<u32> {
+    let from_eval = match timeout(PROBE_TIMEOUT, nvim.eval("getpid()")).await {
+        Ok(Ok(v)) => v.as_i64().and_then(|n| u32::try_from(n).ok()),
+        _ => None,
+    };
+    if from_eval.is_some() {
+        return from_eval;
+    }
+    pid_from_listen(listen).await
+}
+
+/// Platform-specific shortcut: ask the OS for the PID of the process
+/// listening on `listen`, without going through nvim's RPC. Used as a
+/// fallback when `eval(getpid())` doesn't answer (e.g. nvim is stuck
+/// in a hit-enter prompt or a slow autocmd).
 #[cfg(windows)]
-fn pid_from_listen(listen: &str) -> Option<u32> {
+async fn pid_from_listen(listen: &str) -> Option<u32> {
+    // `CreateFileW` is synchronous and can in principle block (e.g.
+    // ERROR_PIPE_BUSY waits) — keep the tokio executor unblocked by
+    // running it on the blocking pool.
+    let listen = listen.to_string();
+    tokio::task::spawn_blocking(move || pid_from_listen_blocking(&listen))
+        .await
+        .ok()
+        .flatten()
+}
+
+#[cfg(windows)]
+fn pid_from_listen_blocking(listen: &str) -> Option<u32> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_GENERIC_READ, FILE_GENERIC_WRITE, OPEN_EXISTING,
-    };
+    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_GENERIC_READ, OPEN_EXISTING};
     use windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId;
 
     // Only meaningful for `\\.\pipe\<name>` paths. Calling
@@ -544,10 +558,13 @@ fn pid_from_listen(listen: &str) -> Option<u32> {
     // a client connection to the named pipe. Pointers are valid for the
     // duration of the call (`wide` lives through it; the optional
     // SECURITY_ATTRIBUTES / template-handle args are null per docs).
+    // Read-only access is sufficient — `GetNamedPipeServerProcessId`
+    // requires `GENERIC_READ` only and write access can fail against
+    // pipes with restrictive ACLs.
     let handle = unsafe {
         CreateFileW(
             wide.as_ptr(),
-            FILE_GENERIC_READ | FILE_GENERIC_WRITE,
+            FILE_GENERIC_READ,
             0,
             std::ptr::null(),
             OPEN_EXISTING,
@@ -571,12 +588,12 @@ fn pid_from_listen(listen: &str) -> Option<u32> {
 }
 
 #[cfg(unix)]
-fn pid_from_listen(_listen: &str) -> Option<u32> {
+async fn pid_from_listen(_listen: &str) -> Option<u32> {
     // No equivalent shortcut on Unix domain sockets — `getpeercred`
     // and friends return the *peer's* (i.e. our own) PID, not the
     // server's. Fall back to the eval-based lookup, which is the only
     // reliable path here. A wedged nvim on Unix means the user has to
-    // SIGKILL by hand; this is a known limitation.
+    // SIGKILL by hand; tracked as a follow-up (lsof-based escalation).
     None
 }
 
