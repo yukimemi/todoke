@@ -86,6 +86,7 @@ authoritative spec.
 Run:
 
 ```sh
+cargo make setup              # one-time on clone: pre-push hook + APM install
 cargo test                    # unit + integration
 cargo test --test cli         # integration only
 cargo fmt --check
@@ -94,6 +95,14 @@ cargo clippy --all-targets -- -D warnings
 
 `cargo make check` runs the whole pre-push suite (fmt / clippy / test /
 locked build). A pre-push hook invokes it automatically.
+
+`cargo make setup` is `hook-install` + `apm-install`. The latter
+runs `apm install`, which compiles the
+[renri](https://github.com/yukimemi/renri) skill (declared in
+`apm.yml`, pinned to `#v0.1.5`) into `.claude/skills/` +
+`.github/skills/` so AI sessions know how to manage worktrees /
+jj workspaces while developing todoke. Lockfile is `apm.lock.yaml`.
+Bump the pinned version explicitly when wanting newer renri features.
 
 ## Contribution workflow
 
