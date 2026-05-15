@@ -12,6 +12,8 @@
   <a href="https://crates.io/crates/todoke"><img src="https://img.shields.io/crates/v/todoke.svg" alt="crates.io"/></a>
   <a href="https://github.com/yukimemi/todoke/actions"><img src="https://github.com/yukimemi/todoke/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"/></a>
+  <a href="https://deepwiki.com/yukimemi/todoke"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"/></a>
+  <a href="https://codewiki.google/github.com/yukimemi/todoke"><img src="https://img.shields.io/badge/View-Code_Wiki-4285F4?logo=google" alt="View Code Wiki"/></a>
 </p>
 
 `todoke` takes one or more file paths and decides what to do with each of
