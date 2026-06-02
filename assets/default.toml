@@ -6,6 +6,20 @@
 # user-defined vars go here, e.g.:
 # proj_root = "/home/you/src"
 
+# Tool-wide settings. Background auto-update behaviour:
+#   auto_update = "install" # off | notify | install (default: install)
+#     off     = never check or install
+#     notify  = check in the background, print a banner if a newer release
+#               exists, but don't install
+#     install = silently download + swap the binary in the background; the
+#               new version applies on the next launch (the default)
+#   update_interval = "24h" # throttle between background checks (humantime)
+# The TODOKE_NO_AUTOUPDATE env var (set to anything but "" / "0" / "false")
+# disables auto-update entirely and overrides this setting.
+# [options]
+# auto_update = "install"
+# update_interval = "24h"
+
 # kind = "neovim" opts into msgpack-RPC reuse of a running nvim on `listen`.
 # is_windows()/is_linux()/is_mac() are todoke-provided Tera functions.
 [todoke.nvim]

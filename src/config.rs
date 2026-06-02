@@ -24,12 +24,47 @@ pub const DEFAULT_CONFIG_TOML: &str = include_str!("../assets/default.toml");
 pub struct Config {
     #[serde(default)]
     pub vars: BTreeMap<String, toml::Value>,
+    /// Scalar tool-wide settings (`[options]`). Currently the background
+    /// auto-update behaviour.
+    #[serde(default)]
+    pub options: Options,
     /// Named targets for delivery. Keyed by handler name, referenced from
     /// `rule.to`.
     #[serde(default)]
     pub todoke: BTreeMap<String, Target>,
     #[serde(default)]
     pub rules: Vec<Rule>,
+}
+
+/// Tool-wide scalar settings under `[options]`.
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+pub struct Options {
+    /// Background auto-update behaviour. Defaults to [`AutoUpdateMode::Install`]
+    /// (opt-out silent install). Overridden at runtime by the
+    /// `TODOKE_NO_AUTOUPDATE` env kill-switch, which always wins.
+    #[serde(default)]
+    pub auto_update: AutoUpdateMode,
+    /// Throttle interval between background update checks (humantime, e.g.
+    /// `"24h"` / `"1d"` / `"30m"`). Unset => 24h. An unparseable value falls
+    /// back to the 24h default at runtime.
+    #[serde(default)]
+    pub update_interval: Option<String>,
+}
+
+/// How todoke handles a newer GitHub release found in the background.
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoUpdateMode {
+    /// Never check for or install updates.
+    Off,
+    /// Check in the background and print a one-line banner when a newer
+    /// release exists, but never install it.
+    Notify,
+    /// Silently download + swap the binary in the background (the default).
+    /// The running process keeps the old binary; the new version applies on
+    /// the next launch.
+    #[default]
+    Install,
 }
 
 /// A named delivery target. Describes what happens when a rule picks this
@@ -549,6 +584,109 @@ fn extract_vars(text: &str) -> BTreeMap<String, toml::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn options_default_when_absent_is_install() {
+        // No `[options]` table at all => auto_update defaults to Install
+        // (opt-out silent install) and update_interval is None.
+        let text = r#"
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = ".*"
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        assert_eq!(cfg.raw.options.auto_update, AutoUpdateMode::Install);
+        assert_eq!(cfg.raw.options.update_interval, None);
+    }
+
+    #[test]
+    fn options_auto_update_off_parses() {
+        let text = r#"
+            [options]
+            auto_update = "off"
+
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = ".*"
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        assert_eq!(cfg.raw.options.auto_update, AutoUpdateMode::Off);
+    }
+
+    #[test]
+    fn options_auto_update_notify_parses() {
+        let text = r#"
+            [options]
+            auto_update = "notify"
+
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = ".*"
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        assert_eq!(cfg.raw.options.auto_update, AutoUpdateMode::Notify);
+    }
+
+    #[test]
+    fn options_auto_update_install_parses() {
+        let text = r#"
+            [options]
+            auto_update = "install"
+
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = ".*"
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        assert_eq!(cfg.raw.options.auto_update, AutoUpdateMode::Install);
+    }
+
+    #[test]
+    fn options_empty_table_keeps_install_default() {
+        // An `[options]` table with no keys still resolves to the Install
+        // default (serde field default), matching the embedded config.
+        let text = r#"
+            [options]
+
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = ".*"
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        assert_eq!(cfg.raw.options.auto_update, AutoUpdateMode::Install);
+    }
+
+    #[test]
+    fn options_update_interval_parses() {
+        let text = r#"
+            [options]
+            update_interval = "12h"
+
+            [todoke.a]
+            command = "echo"
+
+            [[rules]]
+            match = ".*"
+            to = "a"
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        assert_eq!(cfg.raw.options.update_interval.as_deref(), Some("12h"));
+    }
 
     #[test]
     fn parses_default_config() {
