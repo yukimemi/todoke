@@ -482,6 +482,37 @@ template:
 proj_root = "/home/me/src"
 ```
 
+### `[options]`
+
+Tool-wide scalar settings.
+
+| field             | type                              | default     | meaning                                                                                              |
+| ----------------- | --------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------- |
+| `auto_update`     | `"off"` / `"notify"` / `"install"` | `"install"` | background auto-update behaviour (see below). The `TODOKE_NO_AUTOUPDATE` env var overrides this.      |
+| `update_interval` | string (humantime, e.g. `"24h"`)  | `"24h"`     | throttle between background update checks. An unparseable value falls back to 24h.                   |
+
+`auto_update` modes:
+
+- `off` — never check for or install updates.
+- `notify` — check in the background and print a one-line banner when a
+  newer release exists, but never install. Run `todoke self-update` to
+  upgrade.
+- `install` (default) — silently download + swap the binary in the
+  background. The running process keeps the old binary; the new version
+  applies on the next launch. todoke prints exactly one stderr line when
+  an install actually happened.
+
+The **`TODOKE_NO_AUTOUPDATE`** environment variable is a kill-switch: set
+it to anything other than empty / `"0"` / `"false"` to disable
+auto-update entirely. It takes precedence over `[options] auto_update`.
+Development builds (run from a `target/` dir) are never updated.
+
+```toml
+[options]
+auto_update = "install"   # off | notify | install
+update_interval = "24h"
+```
+
 ### `[todoke.<name>]`
 
 A delivery target (the value behind a rule's `to = "<name>"`).
@@ -572,9 +603,14 @@ todoke config init           # write the embedded default config if missing (ide
 todoke config edit           # open the config in $EDITOR (writes the default first if missing)
 todoke config show           # print the loaded config TOML (--rendered for post-Tera)
 todoke completion <shell>    # emit shell completion script
+todoke self-update [--yes] [--check]    # update to the latest GitHub release (--check only reports)
 todoke --help
 todoke --version
 ```
+
+todoke also checks for updates in the background after most commands (see
+`[options] auto_update`); by default it silently installs newer releases,
+applied on the next launch. Set `TODOKE_NO_AUTOUPDATE` to disable.
 
 Flags (all long-only and `--todoke-` prefixed so they don't collide with
 flags the downstream tool expects):

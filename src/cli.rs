@@ -140,4 +140,15 @@ pub enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+
+    #[command(about = "Update todoke to the latest GitHub release")]
+    SelfUpdate {
+        #[arg(long, help = "Install without prompting for confirmation")]
+        yes: bool,
+        #[arg(
+            long,
+            help = "Only report whether an update is available; don't install"
+        )]
+        check: bool,
+    },
 }

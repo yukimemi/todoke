@@ -19,6 +19,7 @@ mod platform;
 mod registry;
 mod style;
 mod template;
+mod updater;
 
 use cli::{Cli, Command};
 
@@ -50,7 +51,16 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    match cli.command.take() {
+    // Spawn the background auto-update action (per `[options] auto_update`)
+    // in parallel with the actual command. Skipped for `self-update` (would
+    // double-work) and `completion` (writes the script to stdout; banner noise
+    // could corrupt the captured output). Resilient: returns None on any error.
+    let auto_update_handle = match &cli.command {
+        Some(Command::SelfUpdate { .. }) | Some(Command::Completion { .. }) => None,
+        _ => updater::maybe_spawn_auto_update_check(cli.config.as_deref()).await,
+    };
+
+    let result = match cli.command.take() {
         None => dispatcher::dispatch(&cli, &cli.files).await,
         Some(Command::List { alive_only }) => dispatcher::list(&cli, alive_only).await,
         Some(Command::Kill { group, all, force }) => {
@@ -63,5 +73,14 @@ async fn main() -> Result<()> {
             clap_complete::generate(shell, &mut Cli::command(), "todoke", &mut std::io::stdout());
             Ok(())
         }
+        Some(Command::SelfUpdate { yes, check }) => updater::run_self_update(yes, check).await,
+    };
+
+    // Drain the background auto-update action (notify banner / installed
+    // notice). Bounded internally so fast commands never hang.
+    if let Some(handle) = auto_update_handle {
+        updater::finalize_auto_update_check(handle).await;
     }
+
+    result
 }
