@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context as _, Result, anyhow};
 use directories::BaseDirs;
@@ -561,10 +562,20 @@ const DEFER_CLOSE: &str = "\u{E001}";
 /// False positives (e.g. `{{ vars.cap }}`) are harmless: those vars are also
 /// present at dispatch, so deferral just moves the render one phase later.
 fn defer_dispatch_exprs(text: &str) -> String {
-    let mustache = Regex::new(r"(?s)\{\{.*?\}\}").expect("static regex");
-    let dispatch_ref = Regex::new(r"\b(?:cap|passthrough)\b").expect("static regex");
+    // Compiled once — pre-render is cold, but a `OnceLock` static avoids
+    // recompiling on every config load and matches `input.rs`'s pattern.
+    static MUSTACHE: OnceLock<Regex> = OnceLock::new();
+    static DISPATCH_REF: OnceLock<Regex> = OnceLock::new();
+    let mustache = MUSTACHE.get_or_init(|| Regex::new(r"(?s)\{\{.*?\}\}").expect("static regex"));
+    let dispatch_ref =
+        DISPATCH_REF.get_or_init(|| Regex::new(r"\b(?:cap|passthrough)\b").expect("static regex"));
     mustache
         .replace_all(text, |caps: &regex::Captures| {
+            // `replace_all`'s closure `Replacer` is higher-ranked over the
+            // `&Captures` lifetime, so the return value can't borrow from it —
+            // it has to be owned. (Borrowing non-matching blocks would need a
+            // manual `captures_iter` loop, not worth it: the closure only fires
+            // per `{{ … }}` match, and pre-render is cold.)
             let expr = &caps[0];
             if dispatch_ref.is_match(expr) {
                 expr.replace("{{", DEFER_OPEN).replace("}}", DEFER_CLOSE)
