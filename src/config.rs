@@ -487,6 +487,11 @@ pub fn load_from_str(text: &str) -> Result<ResolvedConfig> {
 ///   as self-referential strings (`"{{ group }}"`) so those tokens pass
 ///   through pre-render unchanged and get rendered later with real values in
 ///   [`crate::dispatcher`].
+///
+/// `cap` / `passthrough` can't use the self-referential-placeholder trick
+/// (they're accessed via subscript / attribute / filter), so instead any
+/// `{{ … }}` expression referencing them is hidden from the render pass and
+/// restored afterwards — see [`defer_dispatch_exprs`].
 pub fn prerender(text: &str) -> Result<String> {
     let vars = extract_vars(text);
 
