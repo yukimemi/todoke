@@ -220,7 +220,7 @@ mod tests {
         assert!(references_input("{% if input %}yes{% endif %}"));
         assert!(references_input("{% if file_path != '' %}y{% endif %}"));
         // cap is intentionally excluded.
-        assert!(!references_input("{{ cap.1 }}"));
+        assert!(!references_input(r#"{{ cap["1"] }}"#));
         assert!(!references_input("{{ cap.name }}"));
         // Unrelated vars.
         assert!(!references_input("{{ group }}"));
@@ -248,7 +248,7 @@ mod tests {
         assert!(references_passthrough("{% if passthrough %}yes{% endif %}"));
         // Unrelated.
         assert!(!references_passthrough("{{ input }}"));
-        assert!(!references_passthrough("{{ cap.1 }}"));
+        assert!(!references_passthrough(r#"{{ cap["1"] }}"#));
         // Literal text outside tags.
         assert!(!references_passthrough("--passthrough-mode=x"));
         assert!(!references_passthrough(""));

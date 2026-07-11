@@ -1,0 +1,136 @@
+   Compiling todoke v2.3.0 (C:\Users\yukimemi\src\github.com\yukimemi\todoke)
+warning: function `is_windows` is never used
+   --> src\platform.rs:122:8
+    |
+122 | pub fn is_windows() -> bool {
+    |        ^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_linux` is never used
+   --> src\platform.rs:126:8
+    |
+126 | pub fn is_linux() -> bool {
+    |        ^^^^^^^^
+
+warning: function `is_mac` is never used
+   --> src\platform.rs:130:8
+    |
+130 | pub fn is_mac() -> bool {
+    |        ^^^^^^
+
+warning: `todoke` (bin "todoke") generated 3 warnings
+warning: `todoke` (bin "todoke" test) generated 3 warnings (3 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.19s
+     Running unittests src\main.rs (target\debug\deps\todoke-06bb19761e6a6c45.exe)
+
+running 89 tests
+test cli::config::tests::ensure_config_exists_succeeds_when_path_has_no_parent_dir ... ok
+test backends::exec::tests::is_passthrough_placeholder_matches_exact_forms_only ... ok
+test backends::exec::tests::renders_template_args_with_file_context ... ok
+test config::tests::non_passthrough_rule_requires_to ... ok
+test backends::exec::tests::references_passthrough_detects_various_forms ... ok
+test config::tests::rejects_consumes_until_without_passthrough ... ok
+test config::tests::rejects_consumes_without_passthrough ... ok
+test config::tests::options_auto_update_install_parses ... ok
+test config::tests::mode_defaults_to_remote_kind_defaults_to_exec ... ok
+test config::tests::options_auto_update_notify_parses ... ok
+test config::tests::options_update_interval_parses ... ok
+test config::tests::dispatch_time_placeholders_survive_prerender ... ok
+test config::tests::options_auto_update_off_parses ... ok
+test config::tests::args_per_mode_with_default_fallback ... ok
+test config::tests::passthrough_rule_can_omit_to ... ok
+test config::tests::options_default_when_absent_is_install ... ok
+test config::tests::rejects_invalid_regex ... ok
+test config::tests::options_empty_table_keeps_install_default ... ok
+test input::tests::force_as_raw_skips_canonicalize ... ok
+test config::tests::rejects_joined_and_passthrough_both_true ... ok
+test input::tests::force_as_file_absolutizes_nonexistent ... ok
+test config::tests::rejects_unknown_to_reference ... ok
+test config::tests::rejects_multiple_consume_forms ... ok
+test input::tests::has_invalid_path_chars_detects_reserved ... ok
+test input::tests::url_detection ... ok
+test config::tests::rejects_invalid_consumes_until_regex ... ok
+test input::tests::url_still_detected_first ... ok
+test backends::exec::tests::references_input_detects_input_and_derived_vars ... ok
+test config::tests::target_gui_parses_true ... ok
+test cli::config::tests::ensure_config_exists_does_not_overwrite_existing ... ok
+test input::tests::looks_like_custom_scheme_cases ... ok
+test matcher::tests::array_match_is_or ... ok
+test input::tests::custom_scheme_args_classify_as_raw ... ok
+test input::tests::nonexistent_path_like_args_classify_as_file ... ok
+test input::tests::invalid_path_chars_route_to_raw ... ok
+test input::tests::extensionless_bare_words_classify_as_file ... ok
+test matcher::tests::captures_empty_when_no_groups ... ok
+test matcher::tests::captures_numbered_groups ... ok
+test matcher::tests::captures_named_groups ... ok
+test config::tests::vars_subtables_are_picked_up ... ok
+test matcher::tests::first_match_none_when_no_rule_fits ... ok
+test config::tests::vars_value_substitutes_top_level ... ok
+test matcher::tests::normalize_converts_backslashes ... ok
+test matcher::tests::normalize_strips_verbatim_prefix ... ok
+test matcher::tests::input_type_array_accepts_any_listed_kind ... ok
+test matcher::tests::exclude_array_is_or ... ok
+test matcher::tests::normalize_unix_passthrough ... ok
+test matcher::tests::normalize_unc_plain ... ok
+test matcher::tests::normalize_unc_verbatim ... ok
+test matcher::tests::vim_path_converts_verbatim_unc ... ok
+test matcher::tests::vim_path_local_uses_forward_slashes ... ok
+test matcher::tests::vim_path_preserves_unc_backslashes ... ok
+test matcher::tests::vim_path_strips_verbatim_local ... ok
+test registry::tests::extract_group_recovers_value_when_shape_matches ... ok
+test registry::tests::extract_group_rejects_non_matching_paths ... ok
+test registry::tests::render_for_round_trips_with_extract_group ... ok
+test matcher::tests::input_type_filter_skips_non_matching_kinds ... ok
+test cli::config::tests::ensure_config_exists_writes_default_when_missing ... ok
+test matcher::tests::exclude_single_pattern_skips_rule ... ok
+test matcher::tests::first_match_returns_first_hit ... ok
+test matcher::tests::first_joined_match_only_sees_joined_rules ... ok
+test matcher::tests::url_subjects_match_as_is ... ok
+test matcher::tests::joined_rule_is_skipped_by_first_match ... ok
+test config::tests::tera_conditional_blocks_are_applied_at_load_time ... ok
+test template::tests::os_function_returns_correct_bool ... ok
+test template::tests::file_keys_empty_for_url_inputs ... ok
+test template::tests::file_input_populates_file_vars ... ok
+test registry::tests::skeleton_errors_when_group_appears_twice ... ok
+test registry::tests::skeleton_errors_when_group_is_not_in_final_path_component ... ok
+test registry::tests::skeleton_extracts_prefix_and_suffix_around_group ... ok
+test updater::tests::env_kill_switch_falsey_stays_enabled ... ok
+test registry::tests::skeleton_errors_when_group_is_missing ... ok
+test template::tests::url_input_populates_url_vars ... ok
+test registry::tests::skeleton_handles_windows_branch_via_is_windows ... ok
+test template::tests::vars_and_env_substitute ... ok
+test template::tests::cap_map_exposed_in_template ... FAILED
+test updater::tests::env_kill_switch_truthy_disables ... ok
+test updater::tests::env_kill_switch_unset_is_enabled ... ok
+test registry::tests::skeleton_resolves_vars_references ... ok
+test config::tests::parses_default_config ... ok
+test updater::tests::maybe_spawn_skips_when_disabled_by_env ... ok
+test updater::tests::state_path_is_under_cache_dir ... ok
+test matcher::tests::default_config_does_not_misroute_project_dirs_named_like_prompts ... ok
+test matcher::tests::default_config_passthrough_catches_nvim_value_flag ... ok
+test matcher::tests::default_config_matches_commit_editmsg ... ok
+test matcher::tests::default_config_matches_ai_tool_prompt_paths ... ok
+test matcher::tests::default_config_passthrough_catches_any_flag ... ok
+test updater::tests::build_checker_returns_some_with_resolved_state_path ... ok
+test updater::tests::maybe_spawn_skips_when_mode_off ... ok
+
+failures:
+
+---- template::tests::cap_map_exposed_in_template stdout ----
+
+thread 'template::tests::cap_map_exposed_in_template' (46480) panicked at src\template.rs:285:87:
+called `Result::unwrap()` on an `Err` value: template render failed: error: Found integer but expected identifier.
+ --> __tera_one_off:1:8
+  |
+1 | {{ cap.0 }} / {{ cap.1 }} / {{ cap.id }}
+  |        ^
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    template::tests::cap_map_exposed_in_template
+
+test result: FAILED. 88 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `--bin todoke`

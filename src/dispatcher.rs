@@ -634,13 +634,13 @@ fn plan_batches(
 }
 
 /// Build a single-batch plan from a `joined` rule hit. The named capture
-/// `input` (or `cap.0` as fallback) is re-classified via `Input::from_arg`
+/// `input` (or `cap["0"]` as fallback) is re-classified via `Input::from_arg`
 /// and becomes the sole input of the batch. All other captures ride along
 /// in `batch.cap` for the target's arg templates.
 fn build_joined_batch(
     cli: &Cli,
     cfg: &ResolvedConfig,
-    tera: &mut tera::Tera,
+    tera: &mut teravars::Engine,
     cwd: &str,
     rule_idx: usize,
     cap: CaptureMap,
@@ -723,8 +723,8 @@ fn resolve_rule<'a>(
 fn resolve_group_with_ctx(
     cli: &Cli,
     rule: &Rule,
-    tera: &mut tera::Tera,
-    ctx: &tera::Context,
+    tera: &mut teravars::Engine,
+    ctx: &teravars::Context,
 ) -> Result<String> {
     if let Some(g) = cli.group.clone() {
         return Ok(g);
@@ -742,8 +742,8 @@ fn resolve_group_with_ctx(
 fn resolve_target_name(
     cli: &Cli,
     rule: &Rule,
-    tera: &mut tera::Tera,
-    ctx: &tera::Context,
+    tera: &mut teravars::Engine,
+    ctx: &teravars::Context,
 ) -> Result<Option<String>> {
     if let Some(t) = cli.to.clone() {
         return Ok(Some(t));
@@ -823,8 +823,8 @@ async fn run_neovim(
     command: &str,
     _rendered_args: &[String],
     batch: &Batch,
-    tera: &mut tera::Tera,
-    ctx: &tera::Context,
+    tera: &mut teravars::Engine,
+    ctx: &teravars::Context,
     is_last: bool,
 ) -> Result<()> {
     let listen_tmpl = target.listen.as_deref().ok_or_else(|| {
@@ -912,9 +912,9 @@ fn run_exec(
 }
 
 fn render_arg_list(
-    tera: &mut tera::Tera,
+    tera: &mut teravars::Engine,
     args: &[String],
-    ctx: &tera::Context,
+    ctx: &teravars::Context,
 ) -> Result<Vec<String>> {
     args.iter()
         .map(|a| render(tera, a, ctx).with_context(|| format!("rendering arg template: {a}")))
