@@ -90,7 +90,7 @@ gui = true
 command = "firefox"
 gui = true
 append_inputs = false
-args.default = ["https://github.com/yukimemi/todoke/issues/{{ cap.1 }}"]
+args.default = ['https://github.com/yukimemi/todoke/issues/{{ cap["1"] }}']
 
 # Git-ref target: opens the GitHub tree browser at a branch / tag / sha.
 [todoke.gh-ref]
@@ -122,7 +122,7 @@ mode = "remote"
 
 # Raw strings — custom-scheme bare ids like `issue:42` auto-detect as Raw
 # so this rule fires without `--todoke-as`. Capture groups are available to the
-# handler as `{{ cap.1 }}` / `{{ cap.name }}`.
+# handler as `{{ cap["1"] }}` / `{{ cap.name }}`.
 [[rules]]
 name = "gh-issue"
 match = '^issue:(\d+)$'
@@ -570,12 +570,17 @@ Available in `rule.group`, `rule.to`, `todoke.*.command`, `todoke.*.listen`,
 | `cwd`           | current working directory           | always        |
 | `group`         | resolved group                      | phase 3       |
 | `rule`          | resolved rule name                  | phase 3       |
-| `cap.0`         | full match of the `match` regex     | when a rule matched |
-| `cap.1` / `cap.2` / … | numbered capture groups       | when defined        |
+| `cap["0"]`      | full match of the `match` regex     | when a rule matched |
+| `cap["1"]` / `cap["2"]` / … | numbered capture groups  | when defined        |
 | `cap.<name>`    | named capture groups `(?P<name>…)`  | when defined        |
 | `passthrough`   | array of raw argv strings from passthrough rules in the batch (`["+42", "-c", ":set ft=md"]`). Render with `{{ passthrough \| join(sep=' ') }}`, iterate via `{% for p in passthrough %}{{ p }}{% endfor %}`. Auto-suppresses the trailing append when referenced (see `append_passthrough`). | always (empty array when no passthrough) |
 | `vars.<key>`    | your `[vars]` entries               | always        |
 | `env.<KEY>`     | process env at todoke invocation    | always        |
+
+> **Note:** numbered capture groups use subscript syntax — `{{ cap["1"] }}`,
+> not `{{ cap.1 }}`. The templating engine (Tera 2.x, via
+> [teravars](https://github.com/yukimemi/teravars)) no longer accepts a bare
+> integer after a dot. Named captures are unchanged: `{{ cap.name }}`.
 
 `kind = "neovim"` targets accept **file inputs only** — URLs and raw
 strings routed to a neovim target are logged and skipped. Route those to

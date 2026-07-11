@@ -1,7 +1,10 @@
-//! Tera wrapper.
+//! Tera templating, via the shared [`teravars`] layer.
 //!
-//! - Registers todoke-specific functions: `is_windows`, `is_linux`, `is_mac`.
-//! - Builds a per-dispatch [`tera::Context`] populated with `input`,
+//! - Uses [`teravars::Engine`], which pre-registers the `is_windows` /
+//!   `is_linux` / `is_mac` OS predicates (plus `env` / `home` / `hash` /
+//!   `port_offset`) — the same `cfg!(target_os = …)` semantics todoke used to
+//!   register by hand (see [`crate::platform`]).
+//! - Builds a per-dispatch [`teravars::Context`] populated with `input`,
 //!   `input_type`, `file_*` (for file inputs), `url_*` (for URL inputs),
 //!   `command_*`, `cwd`, `group`, `rule`, `vars.*`, `env.*`.
 
@@ -9,27 +12,19 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use anyhow::Result;
-use tera::{Function, Tera, Value};
+use teravars::{Context as TeraContext, Engine};
 
 use crate::input::Input;
-use crate::platform;
 
-/// Build a fresh Tera engine with todoke's custom OS functions registered.
-pub fn new_engine() -> Tera {
-    let mut t = Tera::default();
-    t.register_function("is_windows", os_fn(platform::is_windows));
-    t.register_function("is_linux", os_fn(platform::is_linux));
-    t.register_function("is_mac", os_fn(platform::is_mac));
-    t
-}
-
-fn os_fn(check: fn() -> bool) -> impl Function {
-    move |_args: &HashMap<String, Value>| -> tera::Result<Value> { Ok(Value::Bool(check())) }
+/// Build a fresh templating engine with the standard todoke helpers
+/// (`is_windows` / `is_linux` / `is_mac`, `env`, …) registered.
+pub fn new_engine() -> Engine {
+    Engine::new()
 }
 
 /// Render a template string with the given context. Returns an owned String.
-pub fn render(tera: &mut Tera, template: &str, ctx: &tera::Context) -> Result<String> {
-    Ok(tera.render_str(template, ctx)?)
+pub fn render(engine: &mut Engine, template: &str, ctx: &TeraContext) -> Result<String> {
+    Ok(engine.render(template, ctx)?)
 }
 
 /// Inputs to [`build_context`]. Holds references so callers don't have to
@@ -129,8 +124,8 @@ const EMPTY_URL_KEYS: [&str; 6] = [
 
 /// Build a Tera context for a dispatch. When the input is `None` (e.g. the
 /// no-args invocation), all input-derived variables are empty strings.
-pub fn build_context(c: Context<'_>) -> tera::Context {
-    let mut ctx = tera::Context::new();
+pub fn build_context(c: Context<'_>) -> TeraContext {
+    let mut ctx = TeraContext::new();
 
     // Universal input vars
     let (input_str, input_type) = match c.input {
@@ -145,7 +140,7 @@ pub fn build_context(c: Context<'_>) -> tera::Context {
     match c.input {
         Some(Input::File(p)) => {
             for (k, v) in file_vars(p) {
-                ctx.insert(&k, &v);
+                ctx.insert(k, &v);
             }
             for k in EMPTY_URL_KEYS {
                 ctx.insert(k, "");
@@ -156,7 +151,7 @@ pub fn build_context(c: Context<'_>) -> tera::Context {
                 ctx.insert(k, "");
             }
             for (k, v) in url_vars(u) {
-                ctx.insert(&k, &v);
+                ctx.insert(k, &v);
             }
         }
         Some(Input::Raw(_)) | None => {
@@ -170,7 +165,7 @@ pub fn build_context(c: Context<'_>) -> tera::Context {
     }
 
     for (k, v) in command_vars(c.command) {
-        ctx.insert(&k, &v);
+        ctx.insert(k, &v);
     }
 
     ctx.insert("cwd", c.cwd);
@@ -199,7 +194,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn build(input: Option<&Input>, vars: &BTreeMap<String, toml::Value>) -> tera::Context {
+    fn build(input: Option<&Input>, vars: &BTreeMap<String, toml::Value>) -> TeraContext {
         let cap = BTreeMap::new();
         let passthrough: Vec<String> = Vec::new();
         build_context(Context {
@@ -255,10 +250,13 @@ mod tests {
     #[test]
     fn os_function_returns_correct_bool() {
         let mut tera = new_engine();
-        let ctx = tera::Context::new();
-        let rendered = tera
-            .render_str("{% if is_windows() %}W{% else %}nW{% endif %}", &ctx)
-            .unwrap();
+        let ctx = TeraContext::new();
+        let rendered = render(
+            &mut tera,
+            "{% if is_windows() %}W{% else %}nW{% endif %}",
+            &ctx,
+        )
+        .unwrap();
         if cfg!(target_os = "windows") {
             assert_eq!(rendered, "W");
         } else {
@@ -284,7 +282,12 @@ mod tests {
             passthrough: &passthrough,
         });
         let mut tera = new_engine();
-        let out = render(&mut tera, "{{ cap.0 }} / {{ cap.1 }} / {{ cap.id }}", &ctx).unwrap();
+        let out = render(
+            &mut tera,
+            r#"{{ cap["0"] }} / {{ cap["1"] }} / {{ cap.id }}"#,
+            &ctx,
+        )
+        .unwrap();
         assert_eq!(out, "issue:42 / 42 / 42");
     }
 

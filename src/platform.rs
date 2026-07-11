@@ -118,15 +118,3 @@ fn spawn_detached_console_windows(cmd: &mut Command) -> Result<()> {
     wrapper.spawn().context("spawn via cmd /c start failed")?;
     Ok(())
 }
-
-pub fn is_windows() -> bool {
-    cfg!(target_os = "windows")
-}
-
-pub fn is_linux() -> bool {
-    cfg!(target_os = "linux")
-}
-
-pub fn is_mac() -> bool {
-    cfg!(target_os = "macos")
-}

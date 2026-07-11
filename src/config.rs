@@ -481,7 +481,7 @@ pub fn load_from_str(text: &str) -> Result<ResolvedConfig> {
 ///   via a lightweight line scan (so we can populate vars without having to
 ///   parse the whole — still-templated — file as valid TOML yet).
 /// - `env.*` — process env vars.
-/// - `is_windows()` / `is_linux()` / `is_mac()` — todoke-provided.
+/// - `is_windows()` / `is_linux()` / `is_mac()` — provided by [`teravars`].
 /// - Dispatch-time placeholders (`file_path`, `group`, `rule`, …) are inserted
 ///   as self-referential strings (`"{{ group }}"`) so those tokens pass
 ///   through pre-render unchanged and get rendered later with real values in
@@ -490,7 +490,7 @@ pub fn prerender(text: &str) -> Result<String> {
     let vars = extract_vars(text);
 
     let mut tera = crate::template::new_engine();
-    let mut ctx = tera::Context::new();
+    let mut ctx = teravars::Context::new();
 
     let vars_map: HashMap<String, toml::Value> = vars.into_iter().collect();
     ctx.insert("vars", &vars_map);
@@ -525,17 +525,12 @@ pub fn prerender(text: &str) -> Result<String> {
         ctx.insert(name, &format!("{{{{ {name} }}}}"));
     }
 
-    tera.render_str(text, &ctx).map_err(|e| {
-        // Tera nests the real problem under Error::source — walk the chain so
-        // the user sees the line/column, not just "Failed to parse".
-        let mut msg = e.to_string();
-        let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(&e);
-        while let Some(s) = src {
-            msg.push_str(&format!("\n  caused by: {s}"));
-            src = s.source();
-        }
-        anyhow!(msg)
-    })
+    // teravars::Engine::render already flattens Tera's nested error chain into
+    // a single message (its resilience feature), so the underlying line/column
+    // cause reaches the user without walking Error::source by hand here. No
+    // extra `.context()` — both callers (`load` / `load_from_str`) already add
+    // the "Tera pre-render failed" prefix, so adding it here too doubles it.
+    crate::template::render(&mut tera, text, &ctx)
 }
 
 /// Scan raw text for `[vars]` / `[vars.*]` sections and parse them as TOML.
