@@ -527,8 +527,10 @@ pub fn prerender(text: &str) -> Result<String> {
 
     // teravars::Engine::render already flattens Tera's nested error chain into
     // a single message (its resilience feature), so the underlying line/column
-    // cause reaches the user without walking Error::source by hand here.
-    crate::template::render(&mut tera, text, &ctx).context("Tera pre-render failed")
+    // cause reaches the user without walking Error::source by hand here. No
+    // extra `.context()` — both callers (`load` / `load_from_str`) already add
+    // the "Tera pre-render failed" prefix, so adding it here too doubles it.
+    crate::template::render(&mut tera, text, &ctx)
 }
 
 /// Scan raw text for `[vars]` / `[vars.*]` sections and parse them as TOML.
