@@ -525,12 +525,59 @@ pub fn prerender(text: &str) -> Result<String> {
         ctx.insert(name, &format!("{{{{ {name} }}}}"));
     }
 
+    // Defer dispatch-time-only expressions (`cap` / `passthrough`) so pre-render
+    // doesn't try to resolve them against an undefined variable and fail — they
+    // survive verbatim and are rendered later with real values at dispatch.
+    let protected = defer_dispatch_exprs(text);
+
     // teravars::Engine::render already flattens Tera's nested error chain into
     // a single message (its resilience feature), so the underlying line/column
     // cause reaches the user without walking Error::source by hand here. No
     // extra `.context()` — both callers (`load` / `load_from_str`) already add
     // the "Tera pre-render failed" prefix, so adding it here too doubles it.
-    crate::template::render(&mut tera, text, &ctx)
+    crate::template::render(&mut tera, &protected, &ctx).map(|rendered| restore_deferred(&rendered))
+}
+
+/// Sentinels from the Unicode private-use area — vanishingly unlikely to appear
+/// in a real config and never produced by Tera itself — used to hide `{{`/`}}`
+/// delimiters from the pre-render pass.
+const DEFER_OPEN: &str = "\u{E000}";
+const DEFER_CLOSE: &str = "\u{E001}";
+
+/// Neutralize `{{ … }}` value expressions that reference dispatch-time-only
+/// variables (`cap` / `passthrough`) so [`prerender`] leaves them literal for
+/// the dispatch pass to render.
+///
+/// Unlike the scalar dispatch tokens (`group`, `file_path`, …), which survive
+/// pre-render via self-referential placeholders, `cap` / `passthrough` are
+/// accessed through subscript / attribute / filter (`cap["1"]`, `cap.name`,
+/// `passthrough | join`) — the placeholder trick can't reproduce those, so we
+/// hide the whole expression behind private-use sentinels and restore it with
+/// [`restore_deferred`] after rendering.
+///
+/// Scope: only `{{ … }}` value expressions are deferred. `{% for p in
+/// passthrough %}` / `{% if … %}` control blocks that reference dispatch-only
+/// vars would need block-level handling and are out of scope here (see #95).
+/// False positives (e.g. `{{ vars.cap }}`) are harmless: those vars are also
+/// present at dispatch, so deferral just moves the render one phase later.
+fn defer_dispatch_exprs(text: &str) -> String {
+    let mustache = Regex::new(r"(?s)\{\{.*?\}\}").expect("static regex");
+    let dispatch_ref = Regex::new(r"\b(?:cap|passthrough)\b").expect("static regex");
+    mustache
+        .replace_all(text, |caps: &regex::Captures| {
+            let expr = &caps[0];
+            if dispatch_ref.is_match(expr) {
+                expr.replace("{{", DEFER_OPEN).replace("}}", DEFER_CLOSE)
+            } else {
+                expr.to_string()
+            }
+        })
+        .into_owned()
+}
+
+/// Restore the `{{`/`}}` delimiters hidden by [`defer_dispatch_exprs`].
+fn restore_deferred(text: &str) -> String {
+    text.replace(DEFER_OPEN, "{{").replace(DEFER_CLOSE, "}}")
 }
 
 /// Scan raw text for `[vars]` / `[vars.*]` sections and parse them as TOML.
@@ -595,6 +642,81 @@ mod tests {
         let cfg = load_from_str(text).unwrap();
         assert_eq!(cfg.raw.options.auto_update, AutoUpdateMode::Install);
         assert_eq!(cfg.raw.options.update_interval, None);
+    }
+
+    #[test]
+    fn load_accepts_positional_capture_in_args() {
+        // Regression for #95: a config value referencing a numbered capture
+        // must survive pre-render (cap is only known at dispatch) and reach the
+        // parsed config verbatim, ready for the dispatch-time render.
+        let text = r#"
+            [[rules]]
+            match = "issue:(\\d+)"
+            to = "gh-issue"
+
+            [todoke.gh-issue]
+            command = "echo"
+            args.default = ['https://example.com/issues/{{ cap["1"] }}']
+        "#;
+        let cfg = load_from_str(text).expect("config with a cap reference should load");
+        let arg = &cfg.raw.todoke["gh-issue"].args["default"][0];
+        assert_eq!(arg, r#"https://example.com/issues/{{ cap["1"] }}"#);
+    }
+
+    #[test]
+    fn load_accepts_named_capture_and_passthrough_filter() {
+        // Named captures and `passthrough`-filter expressions are dispatch-only
+        // too and must survive pre-render literally.
+        let text = r#"
+            [[rules]]
+            match = "(?P<id>\\d+)"
+            to = "a"
+
+            [todoke.a]
+            command = "echo"
+            args.default = ["{{ cap.id }}", "{{ passthrough | join(sep=' ') }}"]
+        "#;
+        let cfg = load_from_str(text).expect("named cap + passthrough filter should load");
+        let args = &cfg.raw.todoke["a"].args["default"];
+        assert_eq!(args[0], "{{ cap.id }}");
+        assert_eq!(args[1], "{{ passthrough | join(sep=' ') }}");
+    }
+
+    #[test]
+    fn deferred_capture_renders_at_dispatch() {
+        // The end-to-end path the isolated tests missed (#95): a load-deferred
+        // `{{ cap["1"] }}` must render with a real capture at dispatch time.
+        use crate::template::{Context as TemplateCtx, build_context, new_engine, render};
+
+        let text = r#"
+            [[rules]]
+            match = "issue:(\\d+)"
+            to = "gh-issue"
+
+            [todoke.gh-issue]
+            command = "echo"
+            args.default = ['https://example.com/issues/{{ cap["1"] }}']
+        "#;
+        let cfg = load_from_str(text).unwrap();
+        let tmpl = cfg.raw.todoke["gh-issue"].args["default"][0].clone();
+
+        let mut cap = BTreeMap::new();
+        cap.insert("0".to_string(), "issue:42".to_string());
+        cap.insert("1".to_string(), "42".to_string());
+        let passthrough: Vec<String> = Vec::new();
+        let ctx = build_context(TemplateCtx {
+            input: None,
+            command: "echo",
+            cwd: "/cwd",
+            group: "",
+            rule_name: "gh-issue",
+            vars: &BTreeMap::new(),
+            cap: &cap,
+            passthrough: &passthrough,
+        });
+        let mut engine = new_engine();
+        let out = render(&mut engine, &tmpl, &ctx).unwrap();
+        assert_eq!(out, "https://example.com/issues/42");
     }
 
     #[test]
