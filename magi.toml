@@ -49,7 +49,6 @@ e2e = ["CARGO_TARGET_DIR={{ vars.cache }}/todoke-target cargo test --locked --al
 gate = ["CARGO_TARGET_DIR={{ vars.cache }}/todoke-target cargo make check"]
 
 [merge]
-mode = "none"
 # Required here, and in every jj-colocated repo: jj keeps git's HEAD detached at
 # the working-copy commit, so magi cannot infer the base branch from
 # `git symbolic-ref HEAD`.
