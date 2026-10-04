@@ -113,6 +113,7 @@ impl ExecBackend {
             .unwrap_or_else(|| !references_passthrough(&args_joined));
 
         let mut cmd = StdCommand::new(&self.command);
+        platform::apply_login_path(&mut cmd);
         cmd.args(&rendered_args);
         if append_passthrough {
             for p in dctx.passthrough {

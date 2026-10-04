@@ -5,6 +5,55 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
+/// macOS: make `cmd` resolve and run with the user's login-shell `PATH`.
+///
+/// When todoke is started by LaunchServices (file association, Dock) it only
+/// inherits launchd's minimal `PATH`, so a bare `neovide` can't be found and
+/// anything the child spawns (mise / Homebrew tools) is missing too. We ask
+/// `$SHELL -lc 'echo -n "$PATH"'` once per process and set it on the child.
+/// Skipped when the inherited `PATH` is already richer than the system
+/// default (terminal launch), so that path pays no login-shell startup cost.
+/// Fail-soft: any failure leaves the inherited `PATH` untouched. Call before
+/// applying user-configured `env` so an explicit `PATH` there still wins.
+pub fn apply_login_path(cmd: &mut Command) {
+    #[cfg(target_os = "macos")]
+    {
+        let inherited = std::env::var("PATH").unwrap_or_default();
+        if is_minimal_path(&inherited)
+            && let Some(resolved) = LOGIN_PATH.as_deref()
+        {
+            cmd.env("PATH", resolved);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = cmd;
+}
+
+/// True when every `PATH` entry is part of the stock macOS system set.
+#[cfg(any(target_os = "macos", test))]
+fn is_minimal_path(path: &str) -> bool {
+    const SYSTEM: [&str; 4] = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+    path.split(':')
+        .filter(|s| !s.is_empty())
+        .all(|s| SYSTEM.contains(&s))
+}
+
+#[cfg(target_os = "macos")]
+static LOGIN_PATH: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let output = Command::new(&shell)
+        .args(["-lc", "echo -n \"$PATH\""])
+        .output()
+        .inspect_err(|e| tracing::warn!("login shell PATH: spawn {shell} failed: {e}"))
+        .ok()?;
+    if !output.status.success() {
+        tracing::warn!("login shell PATH: {shell} exited with {}", output.status);
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!path.is_empty()).then_some(path)
+});
+
 #[cfg(windows)]
 use std::ffi::OsString;
 #[cfg(windows)]
@@ -117,4 +166,16 @@ fn spawn_detached_console_windows(cmd: &mut Command) -> Result<()> {
     }
     wrapper.spawn().context("spawn via cmd /c start failed")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod login_path_tests {
+    use super::is_minimal_path;
+
+    #[test]
+    fn minimal_path_detection() {
+        assert!(is_minimal_path("/usr/bin:/bin:/usr/sbin:/sbin"));
+        assert!(is_minimal_path(""));
+        assert!(!is_minimal_path("/usr/bin:/opt/homebrew/bin"));
+    }
 }
