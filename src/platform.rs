@@ -42,7 +42,10 @@ fn is_minimal_path(path: &str) -> bool {
 static LOGIN_PATH: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let output = Command::new(&shell)
-        .args(["-lc", "echo -n \"$PATH\""])
+        .args([
+            "-lc",
+            "printf '%s%s%s' __TODOKE_PATH_BEGIN__ \"$PATH\" __TODOKE_PATH_END__",
+        ])
         .output()
         .inspect_err(|e| tracing::warn!("login shell PATH: spawn {shell} failed: {e}"))
         .ok()?;
@@ -50,9 +53,17 @@ static LOGIN_PATH: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::ne
         tracing::warn!("login shell PATH: {shell} exited with {}", output.status);
         return None;
     }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!path.is_empty()).then_some(path)
+    extract_marked_path(&String::from_utf8_lossy(&output.stdout))
 });
+
+/// Pull the `PATH` out from between the markers, ignoring any startup-script
+/// output the login shell printed before or after it.
+#[cfg(any(target_os = "macos", test))]
+fn extract_marked_path(stdout: &str) -> Option<String> {
+    let rest = stdout.rsplit_once("__TODOKE_PATH_BEGIN__")?.1;
+    let path = rest.split_once("__TODOKE_PATH_END__")?.0.trim();
+    (!path.is_empty()).then(|| path.to_string())
+}
 
 #[cfg(windows)]
 use std::ffi::OsString;
@@ -170,12 +181,26 @@ fn spawn_detached_console_windows(cmd: &mut Command) -> Result<()> {
 
 #[cfg(test)]
 mod login_path_tests {
-    use super::is_minimal_path;
+    use super::{extract_marked_path, is_minimal_path};
 
     #[test]
     fn minimal_path_detection() {
         assert!(is_minimal_path("/usr/bin:/bin:/usr/sbin:/sbin"));
         assert!(is_minimal_path(""));
         assert!(!is_minimal_path("/usr/bin:/opt/homebrew/bin"));
+    }
+
+    #[test]
+    fn extracts_path_ignoring_startup_output() {
+        let out = "motd\n__TODOKE_PATH_BEGIN__/opt/homebrew/bin:/usr/bin__TODOKE_PATH_END__bye\n";
+        assert_eq!(
+            extract_marked_path(out).as_deref(),
+            Some("/opt/homebrew/bin:/usr/bin")
+        );
+        assert_eq!(extract_marked_path("no markers"), None);
+        assert_eq!(
+            extract_marked_path("__TODOKE_PATH_BEGIN____TODOKE_PATH_END__"),
+            None
+        );
     }
 }
