@@ -137,6 +137,7 @@ impl NeovimBackend {
     /// On Windows or GUI targets, falls back to a detached spawn.
     fn start_with_listen(&self, files: &[PathBuf]) -> Result<()> {
         let mut cmd = StdCommand::new(&self.command);
+        platform::apply_login_path(&mut cmd);
         for p in &self.passthrough {
             cmd.arg(p);
         }
@@ -174,6 +175,7 @@ impl NeovimBackend {
 
     fn spawn_detached_fresh(&self, files: &[PathBuf]) -> Result<()> {
         let mut cmd = StdCommand::new(&self.command);
+        platform::apply_login_path(&mut cmd);
         for a in &self.args_new {
             cmd.arg(a);
         }
@@ -194,6 +196,7 @@ impl NeovimBackend {
 
     fn spawn_sync(&self, files: &[PathBuf]) -> Result<()> {
         let mut cmd = StdCommand::new(&self.command);
+        platform::apply_login_path(&mut cmd);
         for a in &self.args_new {
             cmd.arg(a);
         }
