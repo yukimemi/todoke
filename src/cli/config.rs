@@ -21,7 +21,7 @@ pub enum ConfigSub {
     Show {
         #[arg(
             long,
-            help = "Print the TOML after Tera pre-render (no rule/file context is provided)"
+            help = "Print the TOML after Tera pre-render, with vars from `include`d files in scope (no rule/file context is provided)"
         )]
         rendered: bool,
     },
@@ -80,17 +80,17 @@ fn edit(explicit_config: Option<&Path>) -> Result<()> {
 
 fn show(explicit_config: Option<&Path>, rendered: bool) -> Result<()> {
     let path = config::resolve_path(explicit_config)?;
-    let text = if path.exists() {
+    let out = if !path.exists() {
+        if rendered {
+            config::prerender(config::DEFAULT_CONFIG_TOML)?
+        } else {
+            config::DEFAULT_CONFIG_TOML.to_string()
+        }
+    } else if rendered {
+        config::prerender_file(&path)?
+    } else {
         std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read config file: {}", path.display()))?
-    } else {
-        config::DEFAULT_CONFIG_TOML.to_string()
-    };
-
-    let out = if rendered {
-        config::prerender(&text)?
-    } else {
-        text
     };
 
     if out.ends_with('\n') {

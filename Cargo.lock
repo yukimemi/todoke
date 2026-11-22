@@ -2197,6 +2197,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "toml_parser",
  "tracing",
  "tracing-subscriber",
  "url",

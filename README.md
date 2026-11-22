@@ -36,6 +36,9 @@ raw shell script. Perfect as your OS default program for text files, as
 - **Tera templating** throughout the config: `{{ file_path }}`,
   `{{ env.HOME }}`, `{% if is_windows() %}…{% endif %}`, structural
   conditionals that include whole editor / rule blocks, every Tera filter.
+- **Split configs** with `include = [...]`: keep machine-specific vars,
+  targets or rules in their own file (handy when a dotfiles manager renders
+  only that file).
 - **Generic CLI support**: any command-line tool works (`code`, `vim`,
   `helix`, `subl`, `emacsclient`, `bat`, `pandoc`, …) without custom code.
 - **Fast**: static Rust binary, cold start in milliseconds.
@@ -471,6 +474,37 @@ Right-click a `.txt` → Open with → Choose another app → Browse → point a
 handler, spawning a new console if the target is a TUI.
 
 ## Configuration reference
+
+### `include`
+
+A root-level `include` (before the first table) pulls in other config files:
+
+```toml
+# ~/.config/todoke/todoke.toml
+include = ["todoke.local.toml"]
+
+[todoke.gui]
+command = "{{ vars.gui }}"
+```
+
+```toml
+# ~/.config/todoke/todoke.local.toml
+[vars]
+gui = "neovide"
+```
+
+- Included files are loaded first, in order, and may include further files.
+  Their `[vars]` are available to the including file's templates.
+- The including file is merged on top: tables merge key by key, scalars are
+  replaced, arrays are appended. So it overrides what it includes, and
+  `[[rules]]` from included files are matched before its own.
+- Relative paths resolve against the including file's directory; `~/` and
+  `{{ env.NAME }}` / `is_windows()` work in the path.
+- A missing file is an error, and so is loading the same file twice (which
+  also rules out include cycles).
+- `include` itself must be a plain TOML array of strings. Other parts of the
+  file, including the first table, can use Tera blocks. `config show
+  --rendered` displays expanded include paths as valid TOML strings.
 
 ### `[vars]`
 
