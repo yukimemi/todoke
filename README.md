@@ -502,7 +502,9 @@ gui = "neovide"
   `{{ env.NAME }}` / `is_windows()` work in the path.
 - A missing file is an error, and so is loading the same file twice (which
   also rules out include cycles).
-- `include` itself must be plain TOML: it is read before Tera runs.
+- `include` itself must be a plain TOML array of strings. Other parts of the
+  file, including the first table, can use Tera blocks. `config show
+  --rendered` displays expanded include paths as valid TOML strings.
 
 ### `[vars]`
 

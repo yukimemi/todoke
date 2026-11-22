@@ -12,6 +12,7 @@
 //! see [`load_file`].
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -19,6 +20,7 @@ use anyhow::{Context as _, Result, anyhow};
 use directories::BaseDirs;
 use regex::Regex;
 use serde::Deserialize;
+use toml_parser::{Source, lexer::TokenKind};
 
 use crate::input::InputKind;
 
@@ -501,25 +503,36 @@ fn load_file(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<Loaded> {
         ));
     }
 
-    let text = std::fs::read_to_string(path)
+    let mut text = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read config file: {}", path.display()))?;
-    let includes = extract_includes(&text)
-        .with_context(|| format!("invalid `include` in {}", path.display()))?;
+    let include_context = || format!("invalid `include` in {}", path.display());
+    let include = extract_include(&text).with_context(include_context)?;
 
     let mut table = toml::Table::new();
-    for include in &includes {
-        let target = resolve_include(path, include)
-            .with_context(|| format!("invalid `include` in {}", path.display()))?;
-        let loaded = load_file(&target, visited)
-            .with_context(|| format!("included from {}", path.display()))?;
-        teravars::deep_merge(&mut table, loaded.table);
+    let mut has_includes = false;
+    let mut include_toml = None;
+    if let Some(include) = include {
+        has_includes = !include.paths.is_empty();
+        let mut rendered_paths = Vec::with_capacity(include.paths.len());
+        for entry in include.paths {
+            let rendered = prerender(&entry).with_context(include_context)?;
+            let target = resolve_include(path, &rendered).with_context(include_context)?;
+            let loaded = load_file(&target, visited)
+                .with_context(|| format!("included from {}", path.display()))?;
+            teravars::deep_merge(&mut table, loaded.table);
+            rendered_paths.push(toml::Value::String(rendered));
+        }
+        // Expand each path only once, then emit it as a TOML string, not as
+        // raw text inside the original quotes (e.g. `C:\Users\...`).
+        include_toml = Some(toml::Value::Array(rendered_paths).to_string());
+        text.replace_range(include.assignment, "include = {{ __todoke_include_toml }}");
     }
 
     let inherited = match table.get("vars") {
         Some(toml::Value::Table(vars)) => vars.clone(),
         _ => toml::Table::new(),
     };
-    let rendered = prerender_with(&text, inherited)
+    let rendered = prerender_with(&text, inherited, include_toml.as_deref())
         .with_context(|| format!("Tera pre-render failed for {}", path.display()))?;
     let mut own: toml::Table = toml::from_str(&rendered)
         .with_context(|| format!("failed to parse TOML at {}", path.display()))?;
@@ -529,7 +542,7 @@ fn load_file(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<Loaded> {
     Ok(Loaded {
         rendered,
         table,
-        has_includes: !includes.is_empty(),
+        has_includes,
     })
 }
 
@@ -539,41 +552,103 @@ pub fn prerender_file(path: &Path) -> Result<String> {
     Ok(load_file(path, &mut HashSet::new())?.rendered)
 }
 
-/// The root-level `include = [...]` of a config file, read before pre-render:
-/// the file as a whole need not be valid TOML until Tera has run, but
-/// root-level keys come before the first table header, and that part must be.
-fn extract_includes(text: &str) -> Result<Vec<String>> {
-    static INCLUDE_KEY: OnceLock<Regex> = OnceLock::new();
-    let include_key =
-        INCLUDE_KEY.get_or_init(|| Regex::new(r"(?m)^\s*include\s*=").expect("static regex"));
+struct Include {
+    assignment: Range<usize>,
+    paths: Vec<String>,
+}
 
-    let root: String = text
-        .lines()
-        .take_while(|line| !line.trim_start().starts_with('['))
-        .flat_map(|line| [line, "\n"])
-        .collect();
-    if !include_key.is_match(&root) {
-        return Ok(Vec::new());
-    }
+/// Read just the root `include` assignment as TOML. Other root values and
+/// the first table header can still be surrounded by Tera syntax.
+fn extract_include(text: &str) -> Result<Option<Include>> {
+    use TokenKind::*;
 
     #[derive(Deserialize)]
     struct Root {
         include: Vec<String>,
     }
-    let root: Root = toml::from_str(&root)
-        .context("expected plain TOML before the first table, e.g. include = [\"local.toml\"]")?;
-    Ok(root.include)
+
+    let mut found = None;
+    let mut assignment = None;
+    let mut at_start = true;
+    let mut depth = 0usize;
+    let mut offset = 0;
+    let mut source = Source::new(text);
+    let mut tokens = source.lex().peekable();
+    while let Some(token) = tokens.next() {
+        let kind = token.kind();
+        let start = offset + token.span().start();
+        if kind == Eof || (depth == 0 && matches!(kind, Comment | Newline)) {
+            if let Some(begin) = assignment.take() {
+                if found.is_some() {
+                    return Err(anyhow!("duplicate `include` key"));
+                }
+                let raw = text[begin..start].trim_end_matches([' ', '\t']);
+                let root: Root = toml::from_str(raw)
+                    .context(r#"expected an array of paths, e.g. include = ["local.toml"]"#)?;
+                found = Some(Include {
+                    assignment: begin..begin + raw.len(),
+                    paths: root.include,
+                });
+            }
+            at_start = true;
+            continue;
+        }
+        if matches!(kind, Whitespace | Comment | Newline) {
+            continue;
+        }
+        if kind == LeftCurlyBracket {
+            // The TOML lexer already skipped over strings and comments.
+            // Skip standalone Tera syntax before it can lex quotes or brackets
+            // inside a tag as TOML.
+            let close = match text.as_bytes().get(start + 1) {
+                Some(b'%') => "%}",
+                Some(b'{') => "}}",
+                Some(b'#') => "#}",
+                _ => "",
+            };
+            if !close.is_empty() {
+                let Some(end) = text[start + 2..].find(close) else {
+                    break; // pre-render reports the unclosed tag
+                };
+                offset = start + 2 + end + close.len();
+                source = Source::new(&text[offset..]);
+                tokens = source.lex().peekable();
+                continue;
+            }
+        }
+        if at_start {
+            if kind == LeftSquareBracket {
+                break;
+            }
+            at_start = false;
+            if matches!(kind, Atom | BasicString | LiteralString) {
+                let mut key = std::borrow::Cow::Borrowed("");
+                let mut error = None;
+                source.get(token).unwrap().decode_key(&mut key, &mut error);
+                if error.is_none() && key == "include" {
+                    while tokens.next_if(|t| t.kind() == Whitespace).is_some() {}
+                    if tokens.peek().is_some_and(|t| t.kind() == Equals) {
+                        assignment = Some(start);
+                    }
+                }
+            }
+        }
+        match kind {
+            LeftSquareBracket | LeftCurlyBracket => depth += 1,
+            RightSquareBracket | RightCurlyBracket => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    Ok(found)
 }
 
-/// Turn one `include` entry into a path: pre-rendered (so `{{ env.HOME }}`
-/// and `is_windows()` work), `~/` expanded, relative to the including file.
+/// Turn a pre-rendered `include` entry into a path.
 fn resolve_include(including: &Path, entry: &str) -> Result<PathBuf> {
-    let rendered = prerender(entry)?;
-    let target = match rendered.strip_prefix("~/") {
+    let target = match entry.strip_prefix("~/") {
         Some(rest) => BaseDirs::new()
             .map(|dirs| dirs.home_dir().join(rest))
             .ok_or_else(|| anyhow!("could not determine home directory"))?,
-        None => PathBuf::from(rendered),
+        None => PathBuf::from(entry),
     };
     Ok(match including.parent() {
         Some(dir) if target.is_relative() => dir.join(target),
@@ -601,16 +676,19 @@ fn resolve_include(including: &Path, entry: &str) -> Result<PathBuf> {
 /// `{{ … }}` expression referencing them is hidden from the render pass and
 /// restored afterwards — see [`defer_dispatch_exprs`].
 pub fn prerender(text: &str) -> Result<String> {
-    prerender_with(text, toml::Table::new())
+    prerender_with(text, toml::Table::new(), None)
 }
 
 /// [`prerender`] with the `[vars]` of included files in scope; the text's own
 /// `[vars]` are merged over them.
-fn prerender_with(text: &str, mut vars: toml::Table) -> Result<String> {
+fn prerender_with(text: &str, mut vars: toml::Table, include_toml: Option<&str>) -> Result<String> {
     teravars::deep_merge(&mut vars, extract_vars(text).into_iter().collect());
 
     let mut tera = crate::template::new_engine();
     let mut ctx = teravars::Context::new();
+    if let Some(include_toml) = include_toml {
+        ctx.insert("__todoke_include_toml", &include_toml);
+    }
 
     let vars_map: HashMap<String, toml::Value> = vars.into_iter().collect();
     ctx.insert("vars", &vars_map);
@@ -1297,16 +1375,16 @@ to = "gui"
 # Not valid TOML until Tera has run: the include must still be found.
 include = ["machine.toml"]
 
-[vars]
-sock = "/tmp/main"
-
+{% if vars.gui == "neovide" %}
 [todoke.gui]
 command = "{{ vars.gui }}"
 listen = "{{ vars.sock }}"
-{% if vars.gui == "neovide" %}
 [todoke.gui.args]
 remote = ["--"]
 {% endif %}
+
+[vars]
+sock = "/tmp/main"
 
 [[rules]]
 name = "default"
@@ -1348,6 +1426,39 @@ to = "gui"
     }
 
     #[test]
+    fn include_expansion_preserves_backslashes_in_rendered_toml() {
+        let name = r"sub\Upper/local.toml";
+        let dir = config_dir(&[
+            (
+                "todoke.toml",
+                r#"include = ["sub{{ '\\\\' | truncate(length=1, end='') }}Upper/local.toml"]"#,
+            ),
+            (name, "[todoke.x]\ncommand = \"echo\"\n"),
+        ]);
+        let path = dir.join("todoke.toml");
+        let cfg = load(Some(&path)).unwrap();
+        assert_eq!(cfg.raw.todoke["x"].command, "echo");
+        let rendered: toml::Table = toml::from_str(&prerender_file(&path).unwrap()).unwrap();
+        assert_eq!(rendered["include"][0].as_str(), Some(name));
+    }
+
+    #[test]
+    fn include_ignores_multiline_string_contents() {
+        let dir = config_dir(&[(
+            "todoke.toml",
+            r#"
+notes = '''
+include = ["gone.toml"]
+'''
+[todoke.x]
+command = "echo"
+"#,
+        )]);
+        let cfg = load(Some(&dir.join("todoke.toml"))).unwrap();
+        assert_eq!(cfg.raw.todoke["x"].command, "echo");
+    }
+
+    #[test]
     fn include_errors_name_the_files_involved() {
         let rule = "[todoke.x]\ncommand = \"echo\"\n\n[[rules]]\nmatch = \".*\"\nto = \"x\"\n";
 
@@ -1358,12 +1469,14 @@ to = "gui"
         let err = format!("{:#}", load(Some(&dir.join("todoke.toml"))).unwrap_err());
         assert!(err.contains("included more than once"), "{err}");
 
-        let dir = config_dir(&[("todoke.toml", &format!("include = [\"gone.toml\"]\n{rule}"))]);
-        let err = format!("{:#}", load(Some(&dir.join("todoke.toml"))).unwrap_err());
-        assert!(
-            err.contains("gone.toml") && err.contains("included from"),
-            "{err}"
-        );
+        for key in ["include", "\"include\"", "'include'", r#""\u0069nclude""#] {
+            let dir = config_dir(&[("todoke.toml", &format!("{key} = [\"gone.toml\"]\n{rule}"))]);
+            let err = format!("{:#}", load(Some(&dir.join("todoke.toml"))).unwrap_err());
+            assert!(
+                err.contains("gone.toml") && err.contains("included from"),
+                "{key}: {err}"
+            );
+        }
 
         let dir = config_dir(&[("todoke.toml", &format!("include = \"a.toml\"\n{rule}"))]);
         let err = format!("{:#}", load(Some(&dir.join("todoke.toml"))).unwrap_err());
