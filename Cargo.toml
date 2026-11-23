@@ -39,7 +39,7 @@ nvim-rs = { version = "0.10.0", features = ["use_tokio"] }
 owo-colors = "4.4.0"
 regex = "1.13.2"
 serde = { version = "1.0.229", features = ["derive"] }
-shlex = "1.3"
+shlex = "2.0.1"
 supports-color = "3.0.2"
 teravars = { version = "0.2.2", features = ["merge"] }
 url = "2.5.8"
