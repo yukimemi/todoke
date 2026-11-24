@@ -46,7 +46,7 @@ url = "2.5.9"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["full"] }
 toml = "1.2.2"
-toml_parser = "1.1.5"
+toml_parser = "1.1.6"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
