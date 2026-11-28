@@ -31,7 +31,7 @@ winresource = "0.1.34"
 
 [dependencies]
 anyhow = "1.0.105"
-clap = { version = "4.6.9", features = ["derive", "env"] }
+clap = { version = "4.6.10", features = ["derive", "env"] }
 clap_complete = "4.6.12"
 directories = "6.0.0"
 kaishin = "0.7.5"
